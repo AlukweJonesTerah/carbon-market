@@ -1,0 +1,181 @@
+/* Card Container */
+.auction-card {
+    max-width: 100%;
+    max-height: 100%;
+    margin: auto;
+    background-color: #fff;
+    border-radius: 12px;
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    padding: 1rem;
+    transition: box-shadow 0.2s ease;
+  }
+  
+  .auction-card:hover {
+    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+  }
+  
+  /* Error Message */
+  .error-message {
+    color: #ff4d4d;
+    text-align: center;
+    padding: 10px 0;
+  }
+  
+  /* Image Section */
+  .auction-image-container {
+    position: relative;
+    margin-bottom: 0.5rem;
+  }
+  
+  .auction-image {
+    width: 100%;
+    height: 30rem;
+    object-fit: cover;
+    border-radius: 8px;
+  }
+  
+  .no-image {
+    width: 100%;
+    height: 30rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: #e2e2e2;
+    color: #555;
+    font-size: 1rem;
+    border-radius: 8px;
+  }
+  
+  .time-remaining {
+    position: absolute;
+    top: 25px;
+    right: 10px;
+    background-color: rgba(255, 255, 255, 0.25);
+    padding: 5px 8px;
+    border-radius: 5px;
+    font-size: 0.9rem;
+    font-weight: 600;
+  }
+  
+  /* Details Section */
+  .auction-details {
+    padding: 0;
+  }
+  
+  .auction-title {
+    font-size: 2.25rem;
+    font-weight: bold;
+  }
+  
+  .auction-description {
+    color: #666;
+    font-size: 0.95rem;
+    margin-top: 0.5rem;
+  }
+  
+  /* Creator Info */
+  .creator-info {
+    display: flex;
+    align-items: center;
+    margin-top: 1rem;
+  }
+  
+  .creator-username {
+    margin-left: 8px;
+    font-size: 0.9rem;
+    color: #777;
+  }
+  
+  .divider {
+    margin: 1.5rem 0;
+    border: none;
+    border-top: 1px solid #e0e0e0;
+  }
+  
+  /* Carbon Info */
+  .carbon-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+    gap: 0.5rem;
+  }
+
+  /* Ensure Carbon Info items display on separate lines */
+.carbon-info p {
+    display: block;
+    margin: 0.5rem 0; /* Adds spacing between lines */
+    text-align: center; /* Center text */
+}
+
+  /* Carbon Info - Adjust for separate line display */
+.carbon-info div {
+    flex-direction: column;
+    text-align: center;
+}
+  
+  .info-label {
+    font-size: 0.85rem;
+    color: #888;
+  }
+  
+  .info-value {
+    font-size: 1.1rem;
+    font-weight: bold;
+  }
+  
+  /* Action Buttons */
+  .action-buttons {
+    display: flex;
+    justify-content: flex-end;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  
+  .edit-button, .bid-button {
+    padding: 0.5rem 1rem;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background-color 0.2s ease;
+  }
+  
+  .edit-button {
+    background-color: #3b82f6;
+  }
+  
+  .edit-button:hover {
+    background-color: #2563eb;
+  }
+  
+  .bid-button {
+    background-color: #10b981;
+  }
+  
+  .bid-button:hover {
+    background-color: #059669;
+  }
+  
+  /* Responsive Styling */
+@media (max-width: 768px) {
+    .auction-card {
+        padding: 1rem;
+    }
+
+    .auction-image {
+        height: 20rem;
+    }
+
+    .carbon-info {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+
+    .action-buttons {
+        flex-direction: column;
+        align-items: stretch;
+    }
+}

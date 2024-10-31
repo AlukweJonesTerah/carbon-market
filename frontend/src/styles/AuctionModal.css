@@ -1,0 +1,114 @@
+/* Background and modal container */
+.modal-background {
+    position: fixed;
+    inset: 0;
+    background-color: rgba(0, 0, 0, 0.6);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 50;
+  }
+  
+  .modal-container {
+    background-color: #ffffff;
+    border-radius: 1rem;
+    width: 90%;
+    max-width: 600px;
+    padding: 1rem;
+    overflow-y: auto;
+    max-height: 90vh;
+    box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.2);
+  }
+  
+  /* Header */
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid #e2e2e2;
+  }
+  
+  .modal-title {
+    font-size: 1.5rem;
+    font-weight: bold;
+  }
+  
+  .close-icon {
+    cursor: pointer;
+  }
+  
+  /* Content */
+  .modal-content {
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+    padding-top: 1rem;
+  }
+  
+  /* Auction Details */
+  .auction-details h2 {
+    font-size: 1.25rem;
+    font-weight: bold;
+  }
+  
+  .detail-label {
+    font-size: 0.875rem;
+    color: #6b7280;
+  }
+  
+  .detail-value {
+    font-size: 1.125rem;
+    font-weight: medium;
+    color: #111827;
+  }
+  
+  /* Bidding Section */
+  .bidding-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+  
+  .bid-input-container {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  
+  .bid-input {
+    flex-grow: 1;
+    height: 2.5rem;
+    padding-left: 1rem;
+    border: 2px solid #38a169;
+    border-radius: 0.5rem;
+  }
+  
+  .bid-button {
+    background-color: #3182ce;
+    color: white;
+    padding: 0.5rem 1rem;
+    border-radius: 0.5rem;
+    font-weight: bold;
+    cursor: pointer;
+    transition: background-color 0.2s;
+  }
+  
+  .bid-button:disabled {
+    background-color: #cbd5e0;
+    cursor: not-allowed;
+  }
+  
+  .highest-bid {
+    font-size: 0.875rem;
+    color: #4a5568;
+  }
+  
+  .auction-ended {
+    text-align: center;
+    font-size: 1rem;
+    color: #718096;
+    padding: 1rem;
+    font-weight: bold;
+  }
+  

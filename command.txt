@@ -1,0 +1,63 @@
+chmod 600 .env
+
+
+python3 -m venv venv
+
+ERROR: Could not find a version that satisfies the requirement ipfshttpclient==0.4.23 (from versions: 0.4.10, 0.4.11, 0.4.12, 0.4.13, 0.4.13.1, 0.4.13.2, 0.6.0, 0.6.0.post1, 0.6.1, 0.7.0a1, 0.7.0, 0.8.0a1, 0.8.0a2)
+source venv/bin/activate  # for Linux/MacOS
+# On Windows:
+# venv\Scripts\activate
+
+
+pip install fastapi uvicorn tensorflow opencv-python numpy requests python-dotenv
+
+/carbon-market
+│
+├── backend
+│   ├── main.py          # FastAPI entry point
+│   ├── .env             # Environment variables (Google Maps API Key)
+│   ├── model.tflite     # Your AI model file
+│   └── requirements.txt # Python dependencies
+│
+├── frontend
+│   ├── src
+│   └── package.json     # Frontend dependencies
+
+
+GOOGLE_MAPS_API_KEY=your_google_maps_api_key_here
+
+node createCeloAccount.js or node main.js
+
+node autoFundAccounts.js
+
+uvicorn main:app --reload
+
+frontend
+
+npx create-react-app .
+
+npm install react-hook-form react-icons react-loadingg
+
+On Windows, run the following command in your terminal:
+
+set NODE_OPTIONS=--openssl-legacy-provider
+
+On Windows, run the following command in your powershell:
+
+$env:NODE_OPTIONS="--openssl-legacy-provider"
+npm start
+
+On Linux or macOS, run:
+
+export NODE_OPTIONS=--openssl-legacy-provider
+npm start
+
+or
+
+nvm install 16
+nvm use 16
+
+npm install --save react-scripts@latest webpack@latest
+
+npm start
+

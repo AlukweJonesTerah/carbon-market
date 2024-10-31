@@ -1,17 +1,31 @@
-node_modules
 .env
+.env.local
+.env.development.local
+.env.test.local
 
-# Hardhat files
-/cache
-/artifacts
+frontend/node_modules
+backend/node_modules
+/node_modules
+.DS_Store
+.idea
+.vscode
+.vscode-test
+.history
+.history-test
+.history-frontend
+.history-backend
+.history-frontend-test
+.history-backend-test
+.history-frontend-test-e2e
+.history-backend-test-e2e
 
-# TypeChain files
-/typechain
-/typechain-types
+frontend/dist
+frontend/package.json
+frontend/package-lock.json
+frontend/yarn.lock
+backend/dist
+backend/package.json
+backend/package-lock.json
+backend/yarn.lock
 
-# solidity-coverage files
-/coverage
-/coverage.json
 
-# Hardhat Ignition default folder for deployments against a local node
-ignition/deployments/chain-31337
