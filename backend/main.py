@@ -1,11 +1,15 @@
 from fastapi import FastAPI, HTTPException, Depends, Query, status,  APIRouter, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from pydantic import BaseModel, validator, Field, PositiveFloat
-from typing import List, Optional
+from fastapi_limiter import FastAPILimiter
+from fastapi_limiter.depends import RateLimiter
+from pydantic import BaseModel, validator, Field, PositiveFloat, field_validator
+from jwt import ExpiredSignatureError, InvalidTokenError
+from typing import List, Optional, Union
 import os
 import json
 import httpx
+import logging
 import requests
 import numpy as np
 from uuid import uuid4
@@ -32,6 +36,7 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.fernet import Fernet, InvalidToken
 import traceback
 from web3 import Web3
+from decimal import Decimal
 # from celo_sdk.kit import Kit
 
 
@@ -60,6 +65,10 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 interpreter = Interpreter(model_path='./model/model.tflite')
 interpreter.allocate_tensors()
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # Google Maps API key
 GOOGLE_MAPS_API_KEY = os.getenv("GOOGLE_MAPS_API_KEY")
 
@@ -70,37 +79,99 @@ client = Client("/dns/ipfs.infura.io/tcp/5001/https")
 class CoordinatesRequest(BaseModel):
     coordinates: List[str]
 
-# Pydantic model for auction data with additional validation
+
+from pydantic import BaseModel, Field, validator, model_validator
+from typing import List, Optional
+from datetime import date, datetime
+from decimal import Decimal, ROUND_HALF_UP, DecimalException
+
 class AuctionData(BaseModel):
     title: str
     description: str
-    start_date: date   # Automatically convert strings to date objects
-    end_date: date       # Automatically convert strings to date objects
+    start_date: date
+    end_date: date
     map_url: str
     coordinates: List[str]
-    predicted_score: float = Field(..., description="Predicted carbon credits (in tons of CO2 equivalent).")
-    carbon_credit_amount: PositiveFloat = Field(..., gt=0, description="Amount of carbon credits should be greater than 0")
+    predicted_score: float = Field(..., gt=0, description="Predicted carbon credits in tons.")
+    total_carbon_tonnage: float = Field(..., gt=0, description="Total carbon tonnage for the project.")
+    carbon_credit_amount: Optional[Decimal] = None  # Calculated on the backend
 
-    # Validator to check that start_date is not in the past
+    # Constants (prefixed with underscore to indicate they are not fields)
+    _COST_PER_TON_KES: Decimal = Decimal("50")  # Conversion rate for 1 ton in KSH
+    _BUFFER_PERCENTAGE: Decimal = Decimal("1.3")   # 130% maximum buffer
+
+    # Calculated fields (not required in user input)
+    estimated_cost_per_ton: Optional[Decimal] = None
+    total_estimated_cost: Optional[Decimal] = None
+    min_carbon_credit: Optional[Decimal] = None
+    max_carbon_credit: Optional[Decimal] = None
+
     @validator("start_date")
     def validate_start_date(cls, v):
-        current_date = datetime.now().date()
-        if v < current_date:
+        if v < datetime.now().date():
             raise ValueError("Start date cannot be before the current date.")
         return v
 
-    # Validator to check that end_date is after start_date
     @validator("end_date")
     def validate_end_date(cls, v, values):
         if "start_date" in values and v <= values["start_date"]:
             raise ValueError("End date must be later than the start date.")
         return v
-    
+
+    @model_validator(mode='after')
+    def calculate_estimated_cost_and_credit_range(self):
+        try:
+            predicted_score = Decimal(str(self.predicted_score))
+            total_carbon_tonnage = Decimal(str(self.total_carbon_tonnage))
+            cost_per_ton_kes = self._COST_PER_TON_KES
+            buffer_percentage = self._BUFFER_PERCENTAGE
+
+            # Calculate Estimated Cost per Ton
+            estimated_cost_per_ton = (predicted_score * cost_per_ton_kes).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            
+            # Calculate Total Estimated Cost
+            total_estimated_cost = (estimated_cost_per_ton * total_carbon_tonnage).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            
+            # Calculate Min and Max Carbon Credit
+            min_carbon_credit = total_estimated_cost
+            max_carbon_credit = (total_estimated_cost * buffer_percentage).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+            # Calculate a default carbon credit amount within the range (e.g., 110%)
+            carbon_credit_amount = (total_estimated_cost * Decimal("1.1")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            
+            # Ensure the calculated amount is within the defined range
+            if carbon_credit_amount < min_carbon_credit:
+                carbon_credit_amount = min_carbon_credit
+            elif carbon_credit_amount > max_carbon_credit:
+                carbon_credit_amount = max_carbon_credit
+            
+            # Assign calculated values to model fields
+            self.estimated_cost_per_ton = estimated_cost_per_ton
+            self.total_estimated_cost = total_estimated_cost
+            self.min_carbon_credit = min_carbon_credit
+            self.max_carbon_credit = max_carbon_credit
+            self.carbon_credit_amount = carbon_credit_amount
+
+            return self
+        except (TypeError, ValueError, DecimalException) as e:
+            raise ValueError(f"Error in calculations: {str(e)}") from e
+
+    class Config:
+        json_encoders = {
+            Decimal: lambda v: f"{float(v):.2f}"  # Format decimals for JSON response
+        }
+
+class CalculationExplanationRequest(BaseModel):
+    predicted_score: Decimal = Field(..., gt=0, description="Predicted carbon credits (in tons of CO2 equivalent).")
+    total_carbon_tonnage: Decimal = Field(..., gt=0, description="Total estimated carbon tonnage of the property.")
+
+
 # Pydantic model for bid data
 class BidData(BaseModel):
     auction_id: str
     bidder: str
     bid_amount: float = Field(..., gt=0, description="Bid amount should be greater than 0")
+
 
 # Generate Celo account using Celo SDK
 async def create_celo_account():
@@ -165,8 +236,8 @@ def check_and_auto_fund(celo_address: str):
         )
         
         # Log stdout and stderr for debugging purposes
-        print(f"autofundAccount.js stdout: {result.stdout.strip()}")
-        print(f"autofundAccount.js stderr: {result.stderr.strip()}")
+        print(f"autofundAccounts.js stdout: {result.stdout.strip()}")
+        print(f"autofundAccounts.js stderr: {result.stderr.strip()}")
 
         # Check if the script exited with an error
         if result.returncode != 0:
@@ -204,7 +275,35 @@ def check_and_auto_fund(celo_address: str):
         print(f"Error in check_and_auto_fund: {repr(e)}")
         return False
 
+# Helper function to run autofund and get balance info
+def check_and_get_balance(celo_address: str):
+    try:
+        # Execute autofundAccount.js synchronously to get balance
+        result = subprocess.run(
+            ["node", "autoFundAccounts.js", celo_address],
+            capture_output=True,
+            text=True
+        )
 
+        # Log stdout for debugging
+        print(f"autofundAccount.js stdout: {result.stdout.strip()}")
+        
+        # Split stdout by lines and attempt to parse only the last line
+        output_lines = result.stdout.strip().splitlines()
+        last_line = output_lines[-1]
+
+        # Parse the last line as JSON
+        fund_result = json.loads(last_line)
+        if "balance" in fund_result:
+            # Return balance and status
+            return {"balance": fund_result["balance"], "status": fund_result["status"]}
+        else:
+            print("Error: Balance info missing in autofund script output")
+        return None
+
+    except Exception as e:
+        print(f"Error in check_and_get_balance: {e}")
+        return None
 
 # Registration endpoint: creates Celo account and stores encrypted mnemonic
 @app.post("/register/")
@@ -254,6 +353,8 @@ async def register(user: UserCreate):
     except Exception as e:
         print(f"Error during registration: {e}")
         traceback.print_exc()  # Print the full traceback
+        logger.error("Error during registration: %s", e)
+        logger.debug("Traceback: %s", traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Internal server error: {e}")
 
 # Login endpoint: authenticate user and decrypt mnemonic
@@ -289,13 +390,71 @@ async def login(user: LoginData):
         print(f"Error during login: {e}")
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"Internal server error: {e}")
-
     
+# Get current user based on JWT token
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Unauthorized access",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id = payload.get("user_id")
+        username = payload.get("sub")
+        celo_address = payload.get("celoAddress")
+        if not all([user_id, username, celo_address]):
+            raise credentials_exception
+
+        user = await users_collection.find_one({
+            "_id": ObjectId(user_id),
+            "username": username,
+            "celoAddress": celo_address
+        })
+        if user is None:
+            raise credentials_exception
+        return user
+
+    except ExpiredSignatureError:
+        logger.error("Token has expired")
+        raise HTTPException(status_code=401, detail="Token expired")
+    except InvalidTokenError:
+        logger.error("Invalid token")
+        raise credentials_exception
+    except Exception as e:
+        logger.error("Error retrieving current user: %s", e)
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+@app.post("/token")
+async def generate_token(form_data: OAuth2PasswordRequestForm = Depends()):
+    try:
+        # Retrieve user from database based on username
+        existing_user = await users_collection.find_one({"username": form_data.username})
+        if not existing_user or not verify_password(form_data.password, existing_user["hashed_password"]):
+            raise HTTPException(status_code=400, detail="Incorrect username or password")
+        
+        # Generate access token
+        access_token = create_access_token({
+            "sub": form_data.username, 
+            "user_id": str(existing_user["_id"]), 
+            "celoAddress": existing_user["celoAddress"]
+        })
+
+        # Return the token in the response
+        return {
+            "access_token": access_token,
+            "token_type": "bearer"
+        }
+
+    except Exception as e:
+        print(f"Error during token generation: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Token generation error")
+      
 def notify_admin(message: str):
     # Placeholder for sending notifications (e.g., email or alert)
     print("Admin Notification:", message)
     # integrate with email or messaging APIs to send notifications
-
 
 
 # Backup recovery: recover account using mnemonic
@@ -320,50 +479,44 @@ async def recover(user: LoginData):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Recovery error: {e}")
 
-# View current user profile (returns public Celo address)
-@app.get("/profile/{username}")
-async def get_profile(username: str):
+from decimal import Decimal
+
+# Constants for conversion
+CELO_TO_USD = Decimal("0.6475")
+CELO_TO_KES = Decimal("78.75")
+
+# View current user profile with Celo balance in CELO, USD, and KES
+@app.get("/profile/")
+async def get_profile(current_user: dict = Depends(get_current_user)):
     try:
-        user = await users_collection.find_one({"username": username})
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
+        # Fetch Celo balance from autofundAccount script
+        balance_info = check_and_get_balance(current_user["celoAddress"])
+
+        if not balance_info:
+            raise HTTPException(status_code=500, detail="Error retrieving Celo balance")
+
+        # Convert balance in Wei to CELO
+        balance_wei = int(balance_info["balance"])
+        balance_celo = Decimal(balance_wei) / Decimal(1e18)
+
+        # Convert to USD and KES
+        balance_usd = balance_celo * CELO_TO_USD
+        balance_kes = balance_celo * CELO_TO_KES
+
+        # Return user profile with balance details
         return {
-            "username": user["username"],
-            "celoAddress": user["celoAddress"]
+            "username": current_user["username"],
+            "email": current_user["email"],
+            "celoAddress": current_user["celoAddress"],
+            "celoBalance": str(balance_celo),
+            "fund_status": balance_info["status"],
+            "balance_usd": f"${balance_usd:.2f}",
+            "balance_kes": f"KES {balance_kes:.2f}"
         }
     except Exception as e:
+        print(f"Error retrieving profile: {e}")
         raise HTTPException(status_code=500, detail="Error retrieving profile")
 
-
-# Get current user based on JWT token
-async def get_current_user(token: str = Depends(oauth2_scheme)):
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Unauthorized access",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
-    try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username = payload.get("sub")
-        user_id = payload.get("user_id")
-        celo_address = payload.get("celoAddress")
-        if username is None or user_id is None or celo_address is None:
-            print("Token missing username, user_id, or celoAddress")
-            raise credentials_exception
-    except JWTError as e:
-        print(f"Token decoding error: {str(e)}")
-        raise credentials_exception
-    
-    # Fetch user from DB and properly await the result
-    user = await users_collection.find_one({
-        "_id": ObjectId(user_id),
-        "username": username,
-        "celoAddress": celo_address
-    })
-    if user is None:
-        print("User not found in database")
-        raise credentials_exception
-    return user
 
 @app.get("/me")
 async def read_users_me(current_user: dict = Depends(get_current_user)):
@@ -621,44 +774,39 @@ async def process_coordinates(request: CoordinatesRequest, current_user: dict = 
         raise HTTPException(status_code=500, detail=f"Failed to process coordinates: {str(e)}")
     
 import tempfile
+import aiohttp
+import aiofiles
 
 # Pinata credentials from environment variables
 PINATA_API_KEY = os.getenv("PINATA_API_KEY")
 PINATA_API_SECRET = os.getenv("PINATA_API_SECRET")
-WEB3_STORAGE_TOKEN = os.getenv("WEB3_STORAGE_TOKEN")
+NFT_STORAGE_API_KEY = os.getenv("NFT_STORAGE_API_KEY")
 
 # Check environment variables
-if not all([PINATA_API_KEY, PINATA_API_SECRET]):
-    raise Exception("Pinata API credentials are missing. Please check environment variables.")
+if not all([PINATA_API_KEY, PINATA_API_SECRET, NFT_STORAGE_API_KEY]):
+    raise Exception("Pinata  or NFT API credentials are missing. Please check environment variables.")
 
-# Function to call JavaScript for Web3.Storage upload
-# def upload_to_web3_storage(file_path):
-    # try:
-    #     # Call the JavaScript file to upload the file to Web3.Storage
-    #     result = subprocess.run(
-    #         ['node', 'web3StorageUpload.js', file_path],
-    #         stdout=subprocess.PIPE,
-    #         stderr=subprocess.PIPE,
-    #         text=True
-    #     )
-
-        # Check if there was an error
-        # if result.returncode != 0:
-        #     print("Error uploading to Web3.Storage:", result.stderr)
-        #     return None
-
-        # Capture and return the IPFS URL from stdout
-    #     ipfs_url = result.stdout.strip()
-    #     print("File uploaded to Web3.Storage:", ipfs_url)
-    #     return ipfs_url
-    # except Exception as e:
-    #     print(f"Failed to upload to Web3.Storage: {e}")
-        # return None
-    
-# Function to upload to Pinata as a backup
-def upload_to_pinata(file_path):
+# Upload JSON data to NFT.Storage
+async def upload_to_nft_storage(data):
+    try:
+        url = "https://api.nft.storage/upload"
+        headers = {
+            "Authorization": f"Bearer {NFT_STORAGE_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        async with httpx.AsyncClient() as client:
+            response = await client.post(url, headers=headers, json=data)
+            response.raise_for_status()
+            cid = response.json()["value"]["cid"]
+            return f"https://{cid}.ipfs.dweb.link"
+    except Exception as e:
+        print(f"Error uploading to NFT.Storage: {e}")
+        return None
+      
+# Function to upload to Pinata 
+async def upload_to_pinata(file_path):
     """
-    Upload to Pinata as a backup service
+    Upload to Pinata as the primary IPFS service.
     """
     try:
         url = "https://api.pinata.cloud/pinning/pinFileToIPFS"
@@ -666,78 +814,113 @@ def upload_to_pinata(file_path):
             "pinata_api_key": PINATA_API_KEY,
             "pinata_secret_api_key": PINATA_API_SECRET
         }
-        
-        # Make sure we're reading the file in binary mode
-        with open(file_path, "rb") as file:
-            files = {"file": file}
-            response = requests.post(url, headers=headers, files=files)
-            response.raise_for_status()
-            ipfs_hash = response.json()["IpfsHash"]
-            return f"https://gateway.pinata.cloud/ipfs/{ipfs_hash}"
+
+        # Upload the file using aiofiles
+        async with aiofiles.open(file_path, 'rb') as f:
+            file_content = await f.read()
+            files = {'file': ('filename', file_content)}
+
+            async with httpx.AsyncClient() as client:
+                response = await client.post(url, headers=headers, files=files)
+                response.raise_for_status()
+                ipfs_hash = response.json()["IpfsHash"]
+                return f"https://gateway.pinata.cloud/ipfs/{ipfs_hash}"
     except Exception as e:
         print(f"Error uploading to Pinata: {e}")
-        return None   
-# Unified function with Web3.Storage and Pinata backup
-def upload_file_with_backup(file_path):
-    # Attempt upload to Web3.Storage
-    ipfs_url = upload_to_pinata(file_path)
-    if ipfs_url:
-        return ipfs_url
+        return None
+    
+# Function to upload JSON or binary data to local IPFS gateway
+async def upload_to_ipfs_gateway(data: Union[bytes, dict]):
+    """Upload to IPFS HTTP Gateway with support for binary files."""
+    try:
+        url = "https://ipfs.infura.io:5001/api/v0/add"
+        headers = {"Content-Type": "multipart/form-data"}
 
-    # Fallback to Pinata if Web3.Storage fails
-    print("Web3.Storage upload failed. Trying Pinata...")
-    return upload_to_pinata(file_path)
+        async with httpx.AsyncClient() as client:
+            if isinstance(data, bytes):
+                files = {"file": ("data.bin", data)}
+            else:
+                files = {"file": ("data.json", json.dumps(data).encode("utf-8"))}
+
+            response = await client.post(url, headers=headers, files=files)
+            response.raise_for_status()
+            ipfs_hash = response.json()["Hash"]
+            return f"https://ipfs.io/ipfs/{ipfs_hash}"
+    except Exception as e:
+        print(f"Error uploading to IPFS Gateway: {e}")
+        return None
+
+# Primary upload function with backup options
+import aiofiles
+import json
+from fastapi import HTTPException
+
+# Primary upload function with backup options
+async def upload_file_with_backup(file_path):
+    # Attempt to upload to Pinata
+    print("Attempting to upload to Pinata...")
+    ipfs_url = await upload_to_pinata(file_path)
+    if ipfs_url:
+        return {"ipfs_url": ipfs_url, "source": "Pinata"}
+    
+    # Attempt NFT.Storage
+    print("Pinata upload failed. Trying NFT.Storage...")
+    async with aiofiles.open(file_path, 'r') as f:
+        file_data = await f.read()
+    try:
+        json_data = json.loads(file_data)  # Try JSON for NFT.Storage
+        ipfs_url = await upload_to_nft_storage(json_data)
+        if ipfs_url:
+            return {"ipfs_url": ipfs_url, "source": "NFT.Storage"}
+    except json.JSONDecodeError:
+        print("File is not valid JSON, skipping NFT.Storage.")
+
+    # Final fallback: IPFS Gateway (binary-compatible)
+    print("NFT.Storage upload failed. Trying IPFS Gateway...")
+    try:
+        async with aiofiles.open(file_path, 'rb') as f:
+            file_data = await f.read()
+        ipfs_url = await upload_to_ipfs_gateway(file_data)
+        if ipfs_url:
+            return {"ipfs_url": ipfs_url, "source": "IPFS Gateway"}
+    except Exception as e:
+        print("Error uploading to IPFS Gateway:", e)
+
+    print("All IPFS upload attempts failed.")
+    return None
 
 # Download an image from a URL for uploading to Web3.Storage/Pinata
-def download_image_from_url(url):
-    response = requests.get(url)
-    if response.status_code == 200:
-        return response.content  # Binary content of the image
-    else:
-        raise Exception(f"Failed to download image from {url}, status code {response.status_code}")
+async def download_image_from_url(url):
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            if response.status != 200:
+                raise Exception(f"Failed to download image from {url}, status code {response.status}")
+            return await response.read()
 
-# Save and upload an image
-def save_and_upload_image(image_content):
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp_file:
-        temp_file.write(image_content)
+# Save and upload image content to IPFS
+async def save_and_upload_image(image_content):
+    async with aiofiles.tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp_file:
+        await temp_file.write(image_content)
         temp_file_path = temp_file.name
     try:
-        ipfs_url = upload_to_pinata(temp_file_path)
-        if not ipfs_url:
-            print("Web3.Storage upload failed. Trying Pinata...")
-            ipfs_url = upload_to_pinata(temp_file_path)
-        return ipfs_url
+        upload_result = await upload_file_with_backup(temp_file_path)
+        if not upload_result:
+            raise HTTPException(status_code=500, detail="Failed to upload image to any IPFS service.")
+        return upload_result
     finally:
-        os.remove(temp_file_path)
-
-# Save and upload JSON data
-def save_and_upload_json(data):
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".json") as temp_file:
-        json.dump(data, temp_file)
-        temp_file_path = temp_file.name
-    try:
-        ipfs_url = upload_to_pinata(temp_file_path)
-        if not ipfs_url:
-            print("Web3.Storage upload failed. Trying Pinata...")
-            ipfs_url = upload_to_pinata(temp_file_path)
-        return ipfs_url
-    finally:
-        os.remove(temp_file_path)
+        os.remove(temp_file_path)  # Clean up the temporary file
 
 # Endpoint for creating an auction
+from datetime import datetime
+import aiofiles
+import os
+import json
+from fastapi import HTTPException
+
 @app.post("/create_auction/")
 async def create_auction(data: AuctionData, current_user: dict = Depends(get_current_user)):
-    print("Received auction data:", data)
-    print("Auction Data Received:", data.dict())
-    print("Received coordinates:", data.coordinates)
-
     try:
         user_id = str(current_user["_id"])
-
-        # Fetch user coordinates
-        coordinates_record = await user_coordinates_collection.find_one({"user_id": user_id})
-        if not coordinates_record:
-            raise HTTPException(status_code=400, detail="Please complete the coordinates form before creating an auction.")
 
         # Prepare auction data
         auction_info = {
@@ -747,49 +930,199 @@ async def create_auction(data: AuctionData, current_user: dict = Depends(get_cur
             "end_date": data.end_date.isoformat(),
             "map_url": data.map_url,
             "coordinates": data.coordinates,
-            "predicted_score": data.predicted_score,
-            "carbon_credit_amount": data.carbon_credit_amount,
+            "predicted_score": str(data.predicted_score),
+            "total_carbon_tonnage": str(data.total_carbon_tonnage),
+            "estimated_cost_per_ton": str(data.estimated_cost_per_ton),
+            "total_estimated_cost": str(data.total_estimated_cost),
+            "carbon_credit_amount": str(data.carbon_credit_amount),
+            "min_carbon_credit": str(data.min_carbon_credit),
+            "max_carbon_credit": str(data.max_carbon_credit),
             "created_at": datetime.now().isoformat(),
             "creator_id": user_id,
             "creator_address": current_user["celoAddress"],
+            "creator_username": current_user["username"]
         }
 
-        # Upload to IPFS
-        try:
-            ipfs_hash = ipfs_client.add_json(auction_info)
-            print("IPFS hash:", ipfs_hash)
-            if not ipfs_hash:
-                raise HTTPException(status_code=500, detail="Invalid response from IPFS.")
-        except Exception as ipfs_error:
-            traceback.print_exc()
-            raise HTTPException(status_code=500, detail=f"IPFS upload failed: {str(ipfs_error)}")
+        # Upload auction data to IPFS
+        async with aiofiles.tempfile.NamedTemporaryFile(delete=False, suffix=".json") as temp_file:
+            await temp_file.write(json.dumps(auction_info).encode("utf-8"))
+            temp_file_path = temp_file.name
 
-        # Save auction in database
-        auction_info["ipfs_hash"] = ipfs_hash  # Optionally store the IPFS hash in the auction info
+        try:
+            upload_result = await upload_file_with_backup(temp_file_path)
+            if not upload_result:
+                raise HTTPException(status_code=500, detail="Failed to upload auction data to IPFS.")
+            auction_info["ipfs_hash"] = upload_result["ipfs_url"]
+            auction_info["ipfs_source"] = upload_result["source"]
+        finally:
+            os.remove(temp_file_path)
+
+        # Save auction in the database
         result = await auctions_collection.insert_one(auction_info)
         auction_info["_id"] = str(result.inserted_id)
 
+        # Response with key details
         return {
             "message": "Auction created successfully",
             "auction_id": auction_info["_id"],
-            "ipfs_hash": ipfs_hash,
-            "auction_info": auction_info,
+            "ipfs_hash": auction_info["ipfs_hash"],
+            "ipfs_source": auction_info["ipfs_source"],
+            "auction_info": {
+                "title": auction_info["title"],
+                "description": auction_info["description"],
+                "start_date": auction_info["start_date"],
+                "end_date": auction_info["end_date"],
+                "map_url": auction_info["map_url"],
+                "coordinates": auction_info["coordinates"],
+                "predicted_score": auction_info["predicted_score"],
+                "total_carbon_tonnage": auction_info["total_carbon_tonnage"],
+                "estimated_cost_per_ton": auction_info["estimated_cost_per_ton"],
+                "total_estimated_cost": auction_info["total_estimated_cost"],
+                "carbon_credit_amount": auction_info["carbon_credit_amount"],
+                "min_carbon_credit": auction_info["min_carbon_credit"],
+                "max_carbon_credit": auction_info["max_carbon_credit"],
+                "creator_id": auction_info["creator_id"],
+                "creator_address": auction_info["creator_address"],
+                "creator_username": auction_info["creator_username"]
+            }
         }
 
     except Exception as e:
-        print(f"Error creating auction: {str(e)}")
-        traceback.print_exc()
+        print("Error creating auction:", e)
         raise HTTPException(status_code=500, detail=f"Failed to create auction: {str(e)}")
-    
+
+
+@router.post("/explain_calculation/")
+async def explain_calculation(data: CalculationExplanationRequest) -> dict:
+    """
+    Explain how the carbon credit amount is calculated based on predicted score and total carbon tonnage.
+    """
+    try:
+        # Constants
+        COST_PER_TON_KES = Decimal("50000")  # Cost per ton in KES
+        BUFFER_PERCENTAGE = Decimal("1.3")  # 130% for maximum range
+
+        # Calculations
+        estimated_cost_per_ton = data.predicted_score * COST_PER_TON_KES
+        total_estimated_cost = (estimated_cost_per_ton * data.total_carbon_tonnage).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+        # Calculate minimum and maximum allowable carbon credit amounts
+        min_carbon_credit = total_estimated_cost
+        max_carbon_credit = (total_estimated_cost * BUFFER_PERCENTAGE).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+        # Choose a recommended credit amount (e.g., 110% of estimated cost)
+        recommended_credit_amount = (total_estimated_cost * Decimal("1.1")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+        # Explanation response
+        explanation = {
+            "input_values": {
+                "predicted_score": str(data.predicted_score),
+                "total_carbon_tonnage": str(data.total_carbon_tonnage),
+                "cost_per_ton_kes": str(COST_PER_TON_KES)
+            },
+            "calculated_values": {
+                "estimated_cost_per_ton": str(estimated_cost_per_ton),
+                "total_estimated_cost": str(total_estimated_cost),
+                "min_carbon_credit": str(min_carbon_credit),
+                "max_carbon_credit": str(max_carbon_credit),
+                "recommended_credit_amount": str(recommended_credit_amount)
+            },
+            "explanation_steps": [
+                "1. Calculate the estimated cost per ton: estimated_cost_per_ton = predicted_score * COST_PER_TON_KES",
+                "2. Calculate the total estimated cost: total_estimated_cost = estimated_cost_per_ton * total_carbon_tonnage",
+                "3. Set minimum carbon credit to the total estimated cost.",
+                "4. Set maximum carbon credit as 130% of the total estimated cost to allow a 30% buffer.",
+                "5. Recommend a carbon credit amount at 110% of the total estimated cost to account for project variations."
+            ]
+        }
+
+        return {
+            "message": "Carbon credit amount calculation explained successfully.",
+            "explanation": explanation
+        }
+
+    except Exception as e:
+        print("Error explaining calculation:", e)
+        raise HTTPException(status_code=500, detail="Failed to explain calculation.")
+
+
+# Endpoint to retrieve the most recently created auction by the logged-in user
+@app.get("/my-latest-auction/")
+async def get_latest_user_auction(current_user: dict = Depends(get_current_user)):
+    user_id = str(current_user["_id"])
+
+    # Find the most recent auction created by the user, sorted by "created_at" in descending order
+    latest_auction = await auctions_collection.find_one(
+        {"creator_id": user_id},
+        sort=[("created_at", -1)]
+    )
+
+    # If no auctions were found for the user
+    if not latest_auction:
+        raise HTTPException(status_code=404, detail="No auctions found for the current user")
+
+    # Convert ObjectId to string for JSON serialization and add creator details
+    latest_auction["_id"] = str(latest_auction["_id"])
+    latest_auction["creator_info"] = {
+        "username": current_user["username"],
+        "celoAddress": current_user["celoAddress"]
+    }
+
+    return {"latest_auction": latest_auction}
+
+# Endpoint to retrieve all auctions created by the current logged-in user
+@app.get("/my-auctions/")
+async def get_user_auctions(current_user: dict = Depends(get_current_user), page: int = Query(1, ge=1), limit: int = Query(20, ge=1, le=100)):
+    skip = (page - 1) * limit
+    user_id = str(current_user["_id"])
+
+    # Fetch auctions where the creator_id matches the current user's ID
+    auctions = await auctions_collection.find({"creator_id": user_id}).skip(skip).limit(limit).to_list(length=limit)
+
+    # Convert ObjectId to string for JSON serialization and add creator details
+    for auction in auctions:
+        auction["_id"] = str(auction["_id"])
+        auction["creator_info"] = {
+            "username": current_user["username"],
+            "celoAddress": current_user["celoAddress"]
+        }
+
+    return {"auctions": auctions, "page": page, "limit": limit, "total_auctions": len(auctions)}
+
 # Endpoint to fetch all auctions with pagination
 @app.get("/auctions/")
 async def get_auctions(page: int = Query(1, ge=1), limit: int = Query(20, ge=1, le=100)):
     skip = (page - 1) * limit
     auctions = await auctions_collection.find().skip(skip).limit(limit).to_list(length=limit)
 
-    # Convert ObjectId to string for JSON serialization
+    # Create a dictionary to hold user details to avoid redundant database calls
+    user_details_cache = {}
+
+    # Convert ObjectId to string for JSON serialization and add creator details
     for auction in auctions:
         auction["_id"] = str(auction["_id"])
+
+        # Fetch the creator's details only if not already fetched
+        creator_id = auction.get("creator_id")
+        if creator_id and creator_id not in user_details_cache:
+            creator = await users_collection.find_one({"_id": ObjectId(creator_id)})
+            if creator:
+                creator_info = {
+                    "username": creator["username"],
+                    "celoAddress": creator["celoAddress"]
+                }
+
+                # Count the number of auctions created by this user
+                auction_count = await auctions_collection.count_documents({"creator_id": creator_id})
+                creator_info["auction_count"] = auction_count
+
+                # Cache the creator details for reuse
+                user_details_cache[creator_id] = creator_info
+            else:
+                raise HTTPException(status_code=404, detail="Creator not found")
+
+        # Attach the cached creator details to the auction
+        auction["creator_info"] = user_details_cache.get(creator_id, {})
 
     return {"auctions": auctions, "page": page, "limit": limit}
 
@@ -805,7 +1138,7 @@ async def check_user_balance(address: str, required_amount: float) -> bool:
     return balance_eth >= required_amount
 
 # Endpoint to place a bid
-@app.post("/place_bid/") #, current_user: dict = Depends(get_current_user)
+@app.post("/place_bid/")
 async def place_bid(bid: BidData, current_user: dict = Depends(get_current_user)):
     try:
         # Find the auction by ID
@@ -1033,6 +1366,7 @@ async def auction_finalizer():
 @app.on_event("startup")
 async def start_auction_finalizer():
     asyncio.create_task(auction_finalizer())
+
 
 # Main entry point for FastAPI
 if __name__ == "__main__":

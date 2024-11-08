@@ -25,27 +25,33 @@ async function autofundAccount(userAddress) {
         const balance = await web3.eth.getBalance(userAddress);
         console.error("User balance:", balance);
 
+        let status;
+
         if (BigInt(balance) < BigInt(MIN_BALANCE)) {
             const fundingAccountBalance = await web3.eth.getBalance(fundingAccount.address);
             console.error("Funding account balance:", fundingAccountBalance);
 
             if (BigInt(fundingAccountBalance) < BigInt(FUND_AMOUNT)) {
                 console.log(JSON.stringify({ status: "low_funds" }));
+                status = "low_funds";
                 return;
-            }
-
-            // Fund the user account
-            const tx = await kit.sendTransaction({
-                from: fundingAccount.address,
-                to: userAddress,
-                value: FUND_AMOUNT,
-            });
-
-            await tx.waitReceipt();
+            }else {
+                // Fund the user account
+                const tx = await kit.sendTransaction({
+                    from: fundingAccount.address,
+                    to: userAddress,
+                    value: FUND_AMOUNT,
+                });
+                await tx.waitReceipt();
             console.log(JSON.stringify({ status: "funded" }));
+                status = "funded";
+            }
         } else {
+            status = "no_fund_needed";
             console.log(JSON.stringify({ status: "no_fund_needed" }));
         }
+        // Return status and balance in JSON format
+        console.log(JSON.stringify({ status, balance: balance.toString() }));
     } catch (error) {
         console.error("Error in autofundAccount.js:", error);
         console.log(JSON.stringify({ status: "error", error: error.message }));
