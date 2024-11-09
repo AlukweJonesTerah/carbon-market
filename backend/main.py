@@ -97,7 +97,7 @@ class AuctionData(BaseModel):
     carbon_credit_amount: Optional[Decimal] = None  # Calculated on the backend
 
     # Constants (prefixed with underscore to indicate they are not fields)
-    _COST_PER_TON_KES: Decimal = Decimal("50")  # Conversion rate for 1 ton in KSH
+    _COST_PER_TON_KES: Decimal = Decimal("0.5")  # Conversion rate for 1 ton in KSH
     _BUFFER_PERCENTAGE: Decimal = Decimal("1.3")   # 130% maximum buffer
 
     # Calculated fields (not required in user input)
@@ -482,7 +482,7 @@ async def recover(user: LoginData):
 from decimal import Decimal
 
 # Constants for conversion
-CELO_TO_USD = Decimal("0.6475")
+CELO_TO_USD = Decimal("0.647801")
 CELO_TO_KES = Decimal("78.75")
 
 # View current user profile with Celo balance in CELO, USD, and KES
@@ -1126,81 +1126,138 @@ async def get_auctions(page: int = Query(1, ge=1), limit: int = Query(20, ge=1, 
 
     return {"auctions": auctions, "page": page, "limit": limit}
 
-async def check_user_balance(address: str, required_amount: float) -> bool:
-    # Connect to the Celo testnet
-    web3 = Web3(Web3.HTTPProvider("https://alfajores-forno.celo-testnet.org"))
-    
-    # Get the user's balance in wei and convert it to ether
-    balance_wei = web3.eth.get_balance(address)
-    balance_eth = web3.fromWei(balance_wei, 'ether')
-    
-    # Check if balance is sufficient
-    return balance_eth >= required_amount
 
-# Endpoint to place a bid
+# Constants for maximum bid percentage and minimum increment
+MAX_BID_PERCENTAGE = Decimal("600.00")  # Max bid is 600.00% of carbon credit amount
+MINIMUM_BID_INCREMENT = Decimal("0.05")  # 5% increment on the highest bid
+MAX_BIDS_PER_USER = 3  # Limit of bids per user per auction
+
+
+# Helper function to check if a user has sufficient balance
+async def check_user_balance(current_user: dict, required_amount: float) -> bool:
+    # Check for both 'celo_address' and 'celoAddress' keys
+    celo_address = current_user.get("celo_address") or current_user.get("celoAddress")
+    if not celo_address:
+        raise HTTPException(status_code=500, detail="Celo address missing for current user")
+
+    balance_info = check_and_get_balance(celo_address)
+    if not balance_info:
+        raise HTTPException(status_code=500, detail="Error retrieving Celo balance")
+
+    # Convert balance in Wei to CELO
+    balance_celo = Decimal(balance_info["balance"]) / Decimal(1e18)
+
+    # Log balance in USD and KES for verification
+    balance_usd = balance_celo * CELO_TO_USD
+    balance_kes = balance_celo * CELO_TO_KES
+    print(f"User's Celo Balance: {balance_celo} CELO == ${balance_usd} == {balance_kes} KES")
+
+    return balance_celo >= Decimal(required_amount)
+
+# Endpoint to place a bid with a bid limit and carbon credit constraints
 @app.post("/place_bid/")
 async def place_bid(bid: BidData, current_user: dict = Depends(get_current_user)):
     try:
-        # Find the auction by ID
+        # Fetch the auction
         auction = await auctions_collection.find_one({"_id": ObjectId(bid.auction_id)})
         if not auction:
             raise HTTPException(status_code=404, detail="Auction not found")
 
-        # Prevent users from bidding on their own auctions
+        # Prevent self-bidding
         if auction["creator_id"] == str(current_user["_id"]):
             raise HTTPException(status_code=400, detail="You cannot bid on your own auction")
-        
-        # Check if the auction has already ended
+
+        # Check if the auction has ended
         end_date = datetime.fromisoformat(auction['end_date'])
         if datetime.now() > end_date:
             raise HTTPException(status_code=400, detail="The auction has already ended")
 
-        # Check user CKES balance before placing a bid
-        required_balance = bid.bid_amount  # Adjust as needed based on your logic
-        if not await check_user_balance(current_user["celo_address"], required_balance):
-            raise HTTPException(status_code=400, detail="Insufficient CKES balance to place bid")
+        # Check the user's number of bids on this auction
+        user_bids_count = await bids_collection.count_documents({
+            "auction_id": bid.auction_id,
+            "bidder_id": str(current_user["_id"])
+        })
+        
+        if user_bids_count >= MAX_BIDS_PER_USER:
+            raise HTTPException(
+                status_code=400,
+                detail=f"You have reached the limit of {MAX_BIDS_PER_USER} bids on this auction."
+            )
 
-        # Add the bid to the bids collection
+        # Carbon credit boundaries for the bid
+        min_bid_amount = Decimal(auction["carbon_credit_amount"])
+        max_bid_amount = min_bid_amount * MAX_BID_PERCENTAGE
+
+        # Validate bid amount within bounds
+        if Decimal(bid.bid_amount) < min_bid_amount:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Bid amount must be at least the carbon credit amount of {min_bid_amount}."
+            )
+        if Decimal(bid.bid_amount) > max_bid_amount:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Bid amount cannot exceed 130% of the carbon credit amount ({max_bid_amount})."
+            )
+
+        # Check the current highest bid and enforce minimum increment
+        highest_bid = await bids_collection.find_one(
+            {"auction_id": bid.auction_id},
+            sort=[("bid_amount", -1)]
+        )
+        if highest_bid:
+            min_required_bid = Decimal(highest_bid["bid_amount"]) * (1 + MINIMUM_BID_INCREMENT)
+            if Decimal(bid.bid_amount) < min_required_bid:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Bid must be at least 5% higher than the current highest bid of {highest_bid['bid_amount']} CELO."
+                )
+
+        # Check if user has enough balance
+        required_balance = bid.bid_amount
+        if not await check_user_balance(current_user, required_balance):
+            raise HTTPException(status_code=400, detail="Insufficient balance to place bid")
+
+        # Place the bid
         bid_data = {
             "auction_id": bid.auction_id,
             "bidder_id": str(current_user["_id"]),
-            "bidder_address": current_user["celo_address"],
+            "bidder_address": current_user.get("celo_address") or current_user.get("celoAddress"),
             "bid_amount": bid.bid_amount,
             "bid_time": datetime.now().isoformat(),
         }
         await bids_collection.insert_one(bid_data)
 
         return {"message": "Bid placed successfully"}
+
     except HTTPException as he:
         raise he
     except Exception as e:
+        print("Error placing bid:", e)
         raise HTTPException(status_code=500, detail=f"Failed to place bid: {str(e)}")
-
+    
 # Endpoint to fetch the highest bid for an auction
 @app.get("/highest_bid/{auction_id}")
 async def get_highest_bid(auction_id: str):
     try:
-        # Find the highest bid by auction_id
         highest_bid = await bids_collection.find_one(
             {"auction_id": auction_id},
-            sort=[("bid_amount", -1)]  # Sort by bid amount in descending order
+            sort=[("bid_amount", -1)]
         )
 
         if not highest_bid:
             return {"message": "No bids found for this auction"}
 
-        # Convert ObjectId to string before returning the response
         highest_bid["_id"] = str(highest_bid["_id"])
         highest_bid["auction_id"] = str(highest_bid["auction_id"])
 
         return {
             "highest_bid": highest_bid,
-            "bidder_address": highest_bid["bidder_address"]  # Include bidder's Celo address
+            "bidder_address": highest_bid["bidder_address"]
         }
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to retrieve highest bid: {str(e)}")
-
 
 
 def transfer_funds_and_carbon_credits(winner_address, owner_address, bid_amount, carbon_credit_amount):
