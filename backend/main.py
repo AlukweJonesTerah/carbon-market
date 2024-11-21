@@ -88,7 +88,7 @@ from decimal import Decimal, ROUND_HALF_UP, DecimalException
 class AuctionData(BaseModel):
     title: str
     description: str
-    start_date: date
+    start_date: date = Field(default_factory=datetime.now().date)
     end_date: date
     map_url: str
     coordinates: List[str]
@@ -108,8 +108,9 @@ class AuctionData(BaseModel):
 
     @validator("start_date")
     def validate_start_date(cls, v):
-        if v < datetime.now().date():
-            raise ValueError("Start date cannot be before the current date.")
+        current_date = datetime.now().date()
+        if v < current_date:
+            return current_date
         return v
 
     @validator("end_date")
@@ -118,6 +119,12 @@ class AuctionData(BaseModel):
             raise ValueError("End date must be later than the start date.")
         return v
 
+    @validator("predicted_score", pre=True)
+    def validate_predicted_score(cls, v):
+        if not isinstance(v, (int, float, Decimal)) or float(v) <= 0:
+            raise ValueError("Predicted score must be a positive number greater than 0")
+        return float(v)
+    
     @model_validator(mode='after')
     def calculate_estimated_cost_and_credit_range(self):
         try:
@@ -458,14 +465,14 @@ def notify_admin(message: str):
 
 
 # Backup recovery: recover account using mnemonic
-@app.post("/recover/")
-async def recover(user: LoginData):
+@router.post("/recover/")
+async def recover_account(user: LoginData):
     try:
         # Retrieve user data from the database
         existing_user = await users_collection.find_one({"username": user.username})
 
         if not existing_user:
-            raise HTTPException(status_code=400, detail="User not found")
+            raise HTTPException(status_code=404, detail="User not found")
 
         # Decrypt the mnemonic
         decrypted_mnemonic = decrypt_mnemonic(existing_user["encryptedMnemonic"], user.password)
@@ -476,8 +483,10 @@ async def recover(user: LoginData):
             "mnemonic": decrypted_mnemonic
         }
     
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"Decryption error: {str(e)}")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Recovery error: {e}")
+        raise HTTPException(status_code=500, detail="An unexpected error occurred during recovery")
 
 from decimal import Decimal
 
@@ -486,8 +495,8 @@ CELO_TO_USD = Decimal("0.647801")
 CELO_TO_KES = Decimal("78.75")
 
 # View current user profile with Celo balance in CELO, USD, and KES
-@app.get("/profile/")
-async def get_profile(current_user: dict = Depends(get_current_user)):
+@router.get("/profile/")
+async def get_user_profile(current_user: dict = Depends(get_current_user)):
     try:
         # Fetch Celo balance from autofundAccount script
         balance_info = check_and_get_balance(current_user["celoAddress"])
@@ -495,11 +504,11 @@ async def get_profile(current_user: dict = Depends(get_current_user)):
         if not balance_info:
             raise HTTPException(status_code=500, detail="Error retrieving Celo balance")
 
-        # Convert balance in Wei to CELO
+        # Convert balance from Wei to CELO
         balance_wei = int(balance_info["balance"])
         balance_celo = Decimal(balance_wei) / Decimal(1e18)
 
-        # Convert to USD and KES
+        # Convert CELO balance to USD and KES
         balance_usd = balance_celo * CELO_TO_USD
         balance_kes = balance_celo * CELO_TO_KES
 
@@ -508,18 +517,32 @@ async def get_profile(current_user: dict = Depends(get_current_user)):
             "username": current_user["username"],
             "email": current_user["email"],
             "celoAddress": current_user["celoAddress"],
-            "celoBalance": str(balance_celo),
+            "celoBalance": f"{balance_celo:.18f}",  # Show full precision of CELO balance
             "fund_status": balance_info["status"],
             "balance_usd": f"${balance_usd:.2f}",
             "balance_kes": f"KES {balance_kes:.2f}"
         }
+
+    except ValueError as e:
+        print(f"Balance retrieval error: {e}")
+        raise HTTPException(status_code=400, detail="Error in balance conversion")
     except Exception as e:
         print(f"Error retrieving profile: {e}")
-        raise HTTPException(status_code=500, detail="Error retrieving profile")
+        raise HTTPException(status_code=500, detail="An unexpected error occurred while retrieving the profile")
 
 
-@app.get("/me")
-async def read_users_me(current_user: dict = Depends(get_current_user)):
+# @app.get("/me")
+# async def read_users_me(current_user: dict = Depends(get_current_user)):
+#     return {
+#         "_id": str(current_user["_id"]),
+#         "username": current_user["username"],
+#         "email": current_user["email"],
+#         "celoAddress": current_user["celoAddress"],
+#     }
+
+# Get minimal current user info (no need for two separate /me endpoints)
+@router.get("/me")
+async def get_current_user_profile(current_user: dict = Depends(get_current_user)):
     return {
         "_id": str(current_user["_id"]),
         "username": current_user["username"],
@@ -527,15 +550,14 @@ async def read_users_me(current_user: dict = Depends(get_current_user)):
         "celoAddress": current_user["celoAddress"],
     }
 
-
-@app.get("/users/me")
-async def read_users_me(current_user: dict = Depends(get_current_user)):
-    return {
-        "_id": str(current_user["_id"]),
-        "username": current_user["username"],
-        "email": current_user["email"],
-        "celoAddress": current_user["celoAddress"],
-    }
+# @app.get("/users/me")
+# async def read_users_me(current_user: dict = Depends(get_current_user)):
+#     return {
+#         "_id": str(current_user["_id"]),
+#         "username": current_user["username"],
+#         "email": current_user["email"],
+#         "celoAddress": current_user["celoAddress"],
+#     }
 
 # Mocked user data (replace with real database calls)
 mock_users_db = {
@@ -1260,165 +1282,150 @@ async def get_highest_bid(auction_id: str):
         raise HTTPException(status_code=500, detail=f"Failed to retrieve highest bid: {str(e)}")
 
 
-def transfer_funds_and_carbon_credits(winner_address, owner_address, bid_amount, carbon_credit_amount):
+import asyncio
+import json
+import os
+from datetime import datetime
+from fastapi import HTTPException
+from typing import Dict, Any
+from decimal import Decimal
+from web3 import Web3
+from pymongo import MongoClient
+import logging
+
+# Initialize logger
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Initialize web3
+web3 = Web3(Web3.HTTPProvider("https://alfajores-forno.celo-testnet.org"))
+
+def execute_transfer_js_script(recipient_address: str, wei_amount: int) -> Dict[str, Any]:
     try:
-        # Initialize web3 and kit
-        web3 = Web3(Web3.HTTPProvider("https://alfajores-forno.celo-testnet.org"))
-        kit = Kit(web3)
-
-        # Load funding account
-        FUNDING_ACCOUNT_PRIVATE_KEY = os.getenv("FUNDING_ACCOUNT_PRIVATE_KEY")
-        if not FUNDING_ACCOUNT_PRIVATE_KEY:
-            return {"success": False, "error": "Funding account private key not set"}
-
-        funding_account = kit.w3.eth.account.from_key(FUNDING_ACCOUNT_PRIVATE_KEY)
-        funding_address = funding_account.address
-
-        # Check winner's balance
-        winner_balance = kit.w3.eth.get_balance(winner_address)
-        bid_amount_wei = kit.w3.toWei(bid_amount, 'ether')
-
-        # Estimate gas fees
-        gas_price = kit.w3.eth.gas_price
-        gas_limit = 21000  # Standard gas limit for transfers
-        total_gas_fee = gas_price * gas_limit
-
-        # Total amount needed (bid amount + gas fee)
-        total_amount_needed = bid_amount_wei + total_gas_fee
-
-        # Check if winner has enough balance
-        if winner_balance < total_amount_needed:
-            # Use funding account to cover gas fee
-            print("Winner has insufficient balance. Using funding account for gas fees.")
-            # Transfer bid amount from winner to owner
-            tx = {
-                'nonce': kit.w3.eth.get_transaction_count(winner_address),
-                'to': owner_address,
-                'value': bid_amount_wei,
-                'gas': gas_limit,
-                'gasPrice': gas_price,
-            }
-
-            signed_tx = kit.w3.eth.account.sign_transaction(tx, private_key=FUNDING_ACCOUNT_PRIVATE_KEY)
-            tx_hash = kit.w3.eth.send_raw_transaction(signed_tx.rawTransaction)
-            receipt = kit.w3.eth.wait_for_transaction_receipt(tx_hash)
-        else:
-            # Winner pays for gas fees
-            print("Winner has sufficient balance. Proceeding with transaction.")
-            tx = {
-                'nonce': kit.w3.eth.get_transaction_count(winner_address),
-                'to': owner_address,
-                'value': bid_amount_wei,
-                'gas': gas_limit,
-                'gasPrice': gas_price,
-            }
-
-            # Assuming you have the winner's private key (this may not be the case)
-            # In practice, you'd need the winner to sign the transaction client-side
-            # For this example, we'll simulate it using the funding account
-            signed_tx = kit.w3.eth.account.sign_transaction(tx, private_key=FUNDING_ACCOUNT_PRIVATE_KEY)
-            tx_hash = kit.w3.eth.send_raw_transaction(signed_tx.rawTransaction)
-            receipt = kit.w3.eth.wait_for_transaction_receipt(tx_hash)
-
-        # Transfer carbon credits from owner to winner
-        # Assuming carbon credits are ERC20 tokens with a smart contract address
-        carbon_credit_contract_address = os.getenv("CARBON_CREDIT_CONTRACT_ADDRESS")
-        if not carbon_credit_contract_address:
-            return {"success": False, "error": "Carbon credit contract address not set"}
-
-        # Load the contract
-        abi = [...]  # ABI of the carbon credit token contract
-        contract = kit.w3.eth.contract(address=carbon_credit_contract_address, abi=abi)
-
-        # Prepare token transfer transaction
-        transfer_function = contract.functions.transfer(
-            winner_address,
-            kit.w3.toWei(carbon_credit_amount, 'ether')
+        result = subprocess.run(
+            ["node", "transferCkes.js", recipient_address, str(wei_amount)],
+            capture_output=True,
+            text=True
         )
+        
+        if result.returncode != 0:
+            logger.error(f"Error executing transfer script: {result.stderr.strip()}")
+            return {"status": "error", "error": result.stderr.strip() or "Unknown error"}
 
-        tx = transfer_function.buildTransaction({
-            'from': owner_address,
-            'nonce': kit.w3.eth.get_transaction_count(owner_address),
-            'gas': 100000,  # Adjust gas limit as needed
-            'gasPrice': gas_price,
-        })
+        output = json.loads(result.stdout.strip())
+        return output
 
-        # Sign the transaction with the owner's private key
-        owner_private_key = get_owner_private_key(owner_address)
-        signed_tx = kit.w3.eth.account.sign_transaction(tx, private_key=owner_private_key)
-        tx_hash = kit.w3.eth.send_raw_transaction(signed_tx.rawTransaction)
-        receipt = kit.w3.eth.wait_for_transaction_receipt(tx_hash)
-
-        return {"success": True}
+    except json.JSONDecodeError:
+        logger.error("JSON decode error: Transfer script output was not valid JSON.")
+        return {"status": "error", "error": "Invalid JSON output from transfer script"}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        logger.error(f"Unexpected error in execute_transfer_js_script: {e}")
+        return {"status": "error", "error": str(e)}
 
+
+async def transfer_funds_and_carbon_credits(
+    winner_address: str,
+    owner_address: str,
+    bid_amount: Decimal,
+    carbon_credit_amount: Decimal
+) -> Dict[str, Any]:
+    try:
+        bid_amount_wei = web3.to_wei(bid_amount, 'ether')
+        fund_transfer_result = execute_transfer_js_script(owner_address, bid_amount_wei)
+        
+        if fund_transfer_result["status"] != "success":
+            raise HTTPException(status_code=500, detail="CELO transfer failed")
+        
+        # Separate block for contract interaction
+        try:
+            contract_address = os.getenv("CARBON_CREDIT_CONTRACT_ADDRESS")
+            with open(".json", "r") as f:
+                contract_abi = json.load(f)
+            contract = web3.eth.contract(address=contract_address, abi=contract_abi)
+
+            carbon_amount_wei = web3.to_wei(carbon_credit_amount, 'ether')
+            transfer_txn = contract.functions.transfer(winner_address, carbon_amount_wei).build_transaction({
+                'from': owner_address,
+                'nonce': web3.eth.get_transaction_count(owner_address, 'pending'),
+                'gas': 100000,
+                'gasPrice': web3.eth.gas_price
+            })
+
+            signed_txn = web3.eth.account.sign_transaction(transfer_txn, private_key=os.getenv("OWNER_PRIVATE_KEY"))
+            tx_hash = web3.eth.send_raw_transaction(signed_txn.rawTransaction)
+            tx_receipt = web3.eth.wait_for_transaction_receipt(tx_hash)
+
+            if tx_receipt.status != 1:
+                raise HTTPException(status_code=500, detail="Carbon credit transfer failed")
+
+        except HTTPException as e:
+            logger.error(f"Blockchain transfer error: {e}")
+            raise e
+        except Exception as e:
+            logger.error(f"Unexpected error during contract interaction: {e}")
+            raise HTTPException(status_code=500, detail="Error during carbon credit transfer")
+
+        return {"status": "success", "message": "Transfer complete"}
+
+    except HTTPException as e:
+        logger.error(f"Error in transfer: {str(e)}")
+        return {"status": "error", "message": str(e)}
+    except Exception as e:
+        logger.error(f"Unexpected error in transfer: {e}")
+        return {"status": "error", "message": str(e)}
+
+# Finalize Auction
 async def finalize_auction(auction):
     try:
         auction_id = auction["_id"]
         auction_owner_address = auction["creator_address"]
         carbon_credit_amount = auction["carbon_credit_amount"]
 
-        # Find the highest bid
-        highest_bid = await bids_collection.find_one(
-            {"auction_id": str(auction_id)},
-            sort=[("bid_amount", -1)]
-        )
+        highest_bid = await bids_collection.find_one({"auction_id": str(auction_id)}, sort=[("bid_amount", -1)])
 
         if not highest_bid:
-            # No bids were placed; update auction status
-            await auctions_collection.update_one(
-                {"_id": auction_id},
-                {"$set": {"status": "no_bids"}}
-            )
-            print(f"Auction {auction_id} ended with no bids.")
+            await auctions_collection.update_one({"_id": auction_id}, {"$set": {"status": "no_bids"}})
+            logger.info(f"Auction {auction_id} ended with no bids.")
             return
 
         winner_id = highest_bid["bidder_id"]
         winner_address = highest_bid["bidder_address"]
-        bid_amount = highest_bid["bid_amount"]
+        bid_amount = Decimal(highest_bid["bid_amount"])
 
         # Transfer funds and carbon credits
-        payment_result = transfer_funds_and_carbon_credits(
-            winner_address,
-            auction_owner_address,
-            bid_amount,
-            carbon_credit_amount
-        )
+        transfer_result = await transfer_funds_and_carbon_credits(winner_address, auction_owner_address, bid_amount, carbon_credit_amount)
 
-        if payment_result["success"]:
-            # Update auction status to finalized
-            await auctions_collection.update_one(
-                {"_id": auction_id},
-                {"$set": {"status": "finalized", "winner_id": winner_id}}
-            )
-            print(f"Auction {auction_id} finalized successfully.")
+        if transfer_result["status"] == "success":
+            await auctions_collection.update_one({"_id": auction_id}, {"$set": {"status": "finalized", "winner_id": winner_id}})
+            logger.info(f"Auction {auction_id} finalized successfully.")
         else:
-            print(f"Failed to finalize auction {auction_id}: {payment_result['error']}")
-            # Optionally, handle failure (e.g., notify admin)
-    except Exception as e:
-        print(f"Error finalizing auction {auction_id}: {e}")
+            logger.error(f"Failed to finalize auction {auction_id}: {transfer_result['message']}")
 
+    except Exception as e:
+        logger.error(f"Error finalizing auction {auction['_id']}: {e}")
+
+# Check and finalize auctions
 async def check_and_finalize_auctions():
     try:
         current_time = datetime.utcnow()
-        # Find auctions that have ended and are not yet finalized
         ended_auctions = await auctions_collection.find({
             "end_date": {"$lte": current_time.isoformat()},
             "status": {"$ne": "finalized"}
         }).to_list(length=100)
 
         for auction in ended_auctions:
-            auction_id = auction["_id"]
-            print(f"Finalizing auction {auction_id}")
+            logger.info(f"Finalizing auction {auction['_id']}")
             await finalize_auction(auction)
-    except Exception as e:
-        print(f"Error in auction finalizer: {e}")
 
+    except Exception as e:
+        logger.error(f"Error in auction finalizer: {e}")
+
+# Periodic finalizer
 async def auction_finalizer():
     while True:
         await check_and_finalize_auctions()
-        await asyncio.sleep(60)  # Wait for 60 seconds before checking again
+        await asyncio.sleep(60)
+  # Check auctions every minute
 
 @app.on_event("startup")
 async def start_auction_finalizer():

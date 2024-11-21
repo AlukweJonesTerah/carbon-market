@@ -1,4 +1,4 @@
-// frontend/src/App.js
+// src/App.js
 
 import React, { useState, useContext } from "react";
 import "./App.css";
@@ -9,8 +9,14 @@ import AuctionCard from './components/multiStepForm/AuctionCard';
 import AuctionList from './components/multiStepForm/AuctionList';
 import Register from './components/multiStepForm/Register';
 import Login from './components/multiStepForm/Login';
+import AccountRecovery from './components/multiStepForm/AccountRecovery';
+import Profile from './components/multiStepForm/Profile';
+import UserInfo from './components/multiStepForm/UserInfo';
+import LandingPage from './components/multiStepForm/homepage';
 import { Toaster } from 'react-hot-toast';
-import { AuthProvider, AuthContext } from './components/multiStepForm/AuthContext';  // Import AuthProvider and AuthContext
+import { AuthProvider, AuthContext } from './components/multiStepForm/AuthContext';
+import Navbar from './components/Navbar';
+import Footer from './components/Footer';
 
 function App() {
   const [coordinates, setCoordinates] = useState(null);
@@ -22,32 +28,37 @@ function App() {
   };
 
   return (
-    <AuthProvider> {/* Wrap the app in AuthProvider */}
-      <div className="App">
-        <header className="App-header">
-          <h1>Carbon Credit Prediction</h1>
-          <p>Enter the coordinates of your preservation area below:</p>
-          <Router>
+    <AuthProvider>
+      <Router>
+        <div className="App">
+          <Navbar />
+          <div className="App-content">
             <Routes>
+              <Route path="/" element={<LandingPage />} />
               <Route path="/coordinates" element={<CoordinateForm onNext={handleCoordinatesSubmit} />} />
               <Route path="/create-auction" element={<PrivateRoute coordinates={coordinates} predictedScore={predictedScore} />} />
               <Route path="/auction-card/:id" element={<AuctionCard />} />
               <Route path="/auctions" element={<AuctionList />} />
               <Route path="/register" element={<Register />} />
               <Route path="/login" element={<Login />} />
-              <Route path="/" element={<Navigate to="/coordinates" />} />
+              <Route path="/recover" element={<AccountRecovery />} />
+              <Route path="/profile" element={<Profile />} />
+              <Route path="/me" element={<UserInfo />} />
+              {/* <Route path="/authentication" element={<Authentication />} /> */}
+              <Route path="*" element={<Navigate to="/" />} />
             </Routes>
-          </Router>
-          <Toaster />
-        </header>
-      </div>
+            <Toaster />
+          </div>
+          <Footer />
+        </div>
+      </Router>
     </AuthProvider>
   );
 }
 
 // PrivateRoute component for handling protected routes
 function PrivateRoute({ coordinates, predictedScore }) {
-  const { token } = useContext(AuthContext); // Access token from AuthContext
+  const { token } = useContext(AuthContext);
 
   return token ? (
     coordinates ? (

@@ -1,49 +1,48 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FiCheckCircle, FiAlertCircle } from 'react-icons/fi';
-import './Register.css'; // Reusing the same CSS file for consistency
+import './Register.css'; // Reusing the same CSS for consistent styling
 
-const Login = ({ onLogin = () => {} }) => {
+function RecoverAccount() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [mnemonic, setMnemonic] = useState('');
   const [message, setMessage] = useState('');
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
-  const handleSubmit = async (e) => {
+  const handleRecover = async (e) => {
     e.preventDefault();
     setMessage('');
     setSuccess(false);
+    setMnemonic('');
     setLoading(true);
 
     try {
-      const response = await fetch('http://localhost:8000/login', {
+      const response = await fetch('http://localhost:8000/recover/', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({
+          username: username.trim(),
+          password: password,
+        }),
       });
 
       const data = await response.json();
 
       if (response.ok) {
-        localStorage.setItem('token', data.access_token);
-        setMessage('Login successful!');
+        setMessage(data.message);
+        setMnemonic(data.mnemonic);
         setSuccess(true);
-        onLogin(data.access_token);
         setUsername('');
         setPassword('');
-        navigate('/');
       } else {
-        setMessage(
-          Array.isArray(data.detail)
-            ? data.detail.map((err) => err.msg).join(', ')
-            : data.detail || 'An unknown error occurred.'
-        );
+        setMessage(data.detail || 'An error occurred during account recovery.');
       }
     } catch (error) {
-      console.error('Login error:', error);
-      setMessage('An error occurred during login. Please try again.');
+      console.error('Recovery error:', error);
+      setMessage('An unexpected error occurred. Please try again later.');
     } finally {
       setLoading(false);
     }
@@ -53,13 +52,13 @@ const Login = ({ onLogin = () => {} }) => {
     <div className="register-container">
       <div className="register-card">
         <div className="register-header">
-          <h1>Login</h1>
-          <p>Enter your credentials to access your account</p>
+          <h1>Recover Account</h1>
+          <p>Enter your credentials to recover your mnemonic</p>
         </div>
 
-        <form onSubmit={handleSubmit} className="register-form">
+        <form onSubmit={handleRecover} className="register-form">
           <div className="form-group">
-            {/* <label htmlFor="username">Username</label> */}
+            <label htmlFor="username">Username</label>
             <input
               type="text"
               id="username"
@@ -72,7 +71,7 @@ const Login = ({ onLogin = () => {} }) => {
           </div>
 
           <div className="form-group">
-            {/* <label htmlFor="password">Password</label> */}
+            <label htmlFor="password">Password</label>
             <input
               type="password"
               id="password"
@@ -91,25 +90,32 @@ const Login = ({ onLogin = () => {} }) => {
             </div>
           )}
 
+          {mnemonic && (
+            <div className="celo-address">
+              <strong>Your Mnemonic Phrase:</strong>
+              <span className="address-text">{mnemonic}</span>
+            </div>
+          )}
+
           <button
             type="submit"
             className={`submit-button ${loading ? 'loading' : ''}`}
             disabled={loading}
           >
-            {loading ? 'Logging in...' : 'Login'}
+            {loading ? 'Recovering...' : 'Recover Account'}
           </button>
 
           <button
             type="button"
             className="link-button"
-            onClick={() => navigate('/register')}
+            onClick={() => navigate('/login')}
           >
-            Need an account? Register
+            Back to Login
           </button>
         </form>
       </div>
     </div>
   );
-};
+}
 
-export default Login;
+export default RecoverAccount;

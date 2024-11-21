@@ -61,3 +61,14 @@ npm install --save react-scripts@latest webpack@latest
 
 npm start
 
+
+npm install -D @shadcn/ui
+npm install -D @shadcn/ui --legacy-peer-deps
+
+npx shadcn-ui@latest init
+
+npx shadcn-ui@latest add card
+npx shadcn-ui@latest add input
+npx shadcn-ui@latest add button
+npx shadcn-ui@latest add alert
+npx shadcn-ui@latest add tabs

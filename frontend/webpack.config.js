@@ -14,4 +14,12 @@ module.exports = {
       process: require.resolve('process/browser'),
     },
   },
+  rules: [
+    {
+      test: /\.js$/,
+      enforce: 'pre',
+      use: ['source-map-loader'],
+      exclude: /node_modules\/react-jazzicon/,
+    },
+  ],
 };

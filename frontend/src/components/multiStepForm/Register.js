@@ -1,20 +1,36 @@
-// frontend/src/Register.js
-
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { FiCheckCircle, FiAlertCircle } from 'react-icons/fi';
+import './Register.css';
 
 function Register() {
   const [username, setUsername] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [message, setMessage] = useState(''); // For any success or error messages
-  const [celoAddress, setCeloAddress] = useState(''); // Store the Celo address
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [message, setMessage] = useState('');
+  const [celoAddress, setCeloAddress] = useState('');
+  const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
 
-  // Handle form submission
+  const validateForm = () => {
+    if (password !== confirmPassword) {
+      setMessage('Passwords do not match');
+      return false;
+    }
+    if (password.length < 8) {
+      setMessage('Password must be at least 8 characters long');
+      return false;
+    }
+    return true;
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
-    setMessage(''); // Clear any previous messages
+    setMessage('');
+
+    if (!validateForm()) return;
+    setLoading(true);
 
     try {
       const response = await fetch('http://localhost:8000/register', {
@@ -31,14 +47,11 @@ function Register() {
 
       if (response.ok) {
         setMessage('Registration successful!');
-        setCeloAddress(data.celoAddress); // Store the Celo address returned by the backend
-
-        // Optional: Clear form fields on successful registration
+        setCeloAddress(data.celoAddress);
         setUsername('');
         setEmail('');
         setPassword('');
-
-        // Redirect to login after a short delay
+        setConfirmPassword('');
         setTimeout(() => navigate('/login'), 2000);
       } else {
         handleErrors(response, data);
@@ -46,16 +59,16 @@ function Register() {
     } catch (error) {
       console.error('Error during registration:', error);
       setMessage('An error occurred during registration. Please try again later.');
+    } finally {
+      setLoading(false);
     }
   };
 
   const handleErrors = (response, data) => {
     if (response.status === 400 || response.status === 422) {
       if (data.detail) {
-        // Handle validation errors from the backend
         if (Array.isArray(data.detail)) {
-          const errorMessages = data.detail.map((err) => err.msg).join(', ');
-          setMessage(`Registration failed: ${errorMessages}`);
+          setMessage(`Registration failed: ${data.detail.map((err) => err.msg).join(', ')}`);
         } else {
           setMessage(`Registration failed: ${data.detail}`);
         }
@@ -68,55 +81,97 @@ function Register() {
   };
 
   return (
-    <div style={{ maxWidth: '400px', margin: 'auto' }}>
-      <h1>Register</h1>
-
-      {/* Display success or error messages */}
-      {message && <p style={{ color: celoAddress ? 'green' : 'red' }}>{message}</p>}
-
-      {/* Display Celo address if registration is successful */}
-      {celoAddress && (
-        <p>
-          <strong>Your Celo Address:</strong> {celoAddress}
-        </p>
-      )}
-
-      <form onSubmit={handleSubmit}>
-        <div>
-          <label htmlFor="username">Username:</label>
-          <input
-            type="text"
-            id="username"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            required
-          />
+    <div className="register-container">
+      <div className="register-card">
+        <div className="register-header">
+          <h1>Create an Account</h1>
+          <p>Register to start using our platform</p>
         </div>
 
-        <div>
-          <label htmlFor="email">Email:</label>
-          <input
-            type="email"
-            id="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            required
-          />
-        </div>
+        <form onSubmit={handleSubmit} className="register-form">
+          <div className="form-group">
+            {/* <label htmlFor="username">Username</label> */}
+            <input
+              type="text"
+              id="username"
+              placeholder="Enter your username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              required
+              className="form-input"
+            />
+          </div>
 
-        <div>
-          <label htmlFor="password">Password:</label>
-          <input
-            type="password"
-            id="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            required
-          />
-        </div>
+          <div className="form-group">
+            {/* <label htmlFor="email">Email</label> */}
+            <input
+              type="email"
+              id="email"
+              placeholder="Enter your email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              required
+              className="form-input"
+            />
+          </div>
 
-        <button type="submit">Register</button>
-      </form>
+          <div className="form-group">
+            {/* <label htmlFor="password">Password <small style={{ color: '#6b7280' }}>(min. 8 characters)</small></label> */}
+            <input
+              type="password"
+              id="password"
+              placeholder="Create a password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              className="form-input"
+            />
+          </div>
+
+          <div className="form-group">
+            {/* <label htmlFor="confirmPassword">Confirm Password</label> */}
+            <input
+              type="password"
+              id="confirmPassword"
+              placeholder="Confirm your password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              required
+              className="form-input"
+            />
+          </div>
+
+          {message && (
+            <div className={`message ${celoAddress ? 'success' : 'error'}`}>
+              {celoAddress ? <FiCheckCircle /> : <FiAlertCircle />}
+              {message}
+            </div>
+          )}
+
+          {celoAddress && (
+            <div className="celo-address">
+              <strong>Your Celo Address:</strong>
+              <span className="address-text">{celoAddress}</span>
+            </div>
+          )}
+
+          <button 
+            type="submit" 
+            className={`submit-button ${loading ? 'loading' : ''}`}
+            disabled={loading}
+          >
+            {loading ? 'Creating account...' : 'Register'}
+          </button>
+
+          <button 
+            type="button"
+            className="link-button"
+            onClick={() => navigate('/login')}
+          >
+            Already have an account? Sign in
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
