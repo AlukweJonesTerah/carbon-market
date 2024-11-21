@@ -2,7 +2,9 @@ import React, { useEffect, useState } from "react";
 import Jazzicon from "react-jazzicon";
 import { AuctionModal } from "./AuctionModal";
 import { useNavigate, useLocation } from "react-router-dom";
-import "../../styles/MarketplaceCard.css"; // Import the CSS file
+import { Clock, Leaf, User } from "lucide-react";
+import "../../styles/MarketplaceCard.css";
+
 
 const MarketplaceCard = ({
   id,
@@ -35,7 +37,7 @@ const MarketplaceCard = ({
   // Calculate time remaining
   useEffect(() => {
     if (!endDate) {
-      setTimeToFinish("No end date provided.");
+      setTimeToFinish("No end date");
       return;
     }
 
@@ -45,7 +47,7 @@ const MarketplaceCard = ({
       const timeDiff = end - now;
 
       if (timeDiff <= 0) {
-        setTimeToFinish("Auction has ended.");
+        setTimeToFinish("Auction ended");
       } else {
         const days = Math.floor(timeDiff / (1000 * 60 * 60 * 24));
         const hours = Math.floor((timeDiff / (1000 * 60 * 60)) % 24);
@@ -81,7 +83,7 @@ const MarketplaceCard = ({
           <div className="no-image">No Image Available</div>
         )}
         <div className="time-remaining">
-          <label>{timeToFinish}</label>
+          <Clock size={16} strokeWidth={2} className="mr-1" /> {timeToFinish}
         </div>
       </div>
 
@@ -91,18 +93,26 @@ const MarketplaceCard = ({
       </div>
 
       <div className="creator-info">
-        <Jazzicon diameter={25} seed={Math.round(Math.random() * 10000000)} />
-        <label className="creator-name">{displayCreator()}</label>
+        <Jazzicon diameter={35} seed={Math.round(Math.random() * 10000000)} />
+        <div className="creator-details">
+          <User size={16} strokeWidth={2} className="inline-block mr-1 text-blue-500" />
+          <label className="creator-name">{displayCreator()}</label>
+        </div>
       </div>
 
       <hr className="divider" />
 
       <div className="carbon-info">
         <div>
-          <p className="carbon-credit">Carbon Credits: {carbonCredit}</p>
+          <p className="carbon-credit">
+            <Leaf size={16} strokeWidth={2} className="inline-block mr-1 text-green-500" /> 
+            Carbon Credits: {carbonCredit}
+          </p>
           <p className="carbon-score">Carbon Credits Score: {predicted_score} Ton</p>
         </div>
-        <button onClick={toggleModal} className="see-more-button">See more</button>
+        <button onClick={toggleModal} className="see-more-button">
+          See more
+        </button>
       </div>
 
       {isModalOpen && (
