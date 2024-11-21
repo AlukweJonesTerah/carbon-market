@@ -1,14 +1,10 @@
-// AuctionModal.js
-
+import ReactDOM from "react-dom";
 import React, { useState, useEffect, useContext } from "react";
-import { toast } from "react-hot-toast";
 import { RiCloseFill } from "react-icons/ri";
 import Jazzicon from "react-jazzicon";
-import { AuthContext } from './AuthContext'
-import { useNavigate } from 'react-router-dom';
+import { AuthContext } from "./AuthContext";
+import "../../styles/AuctionModalList.css";
 
-
-// Helper function to format dates
 const formatDate = (dateString) => {
   const options = { year: "numeric", month: "long", day: "numeric" };
   const dateObj = new Date(dateString);
@@ -18,163 +14,131 @@ const formatDate = (dateString) => {
 export const AuctionModal = ({ auction, modalOpen, closeModal }) => {
   const { token } = useContext(AuthContext);
   const [bidValue, setBidValue] = useState(0);
-  const navigate = useNavigate();
-  const [additionalData, setAdditionalData] = useState(null);
-  const [error, setError] = useState(null);
-  const [highestBid, setHighestBid] = useState(null); // State for highest bid
+  const [highestBid, setHighestBid] = useState(null);
+  const [bidCount, setBidCount] = useState(0);
   const [auctionFinished, setAuctionFinished] = useState(false);
 
-  // Check if auction is finished
   useEffect(() => {
     const endDate = new Date(auction.end_date);
     const now = new Date();
     setAuctionFinished(now > endDate);
   }, [auction.end_date]);
 
-  // Fetch the highest bid when the modal opens
   useEffect(() => {
-    const fetchHighestBid = async () => {
+    const fetchAuctionData = async () => {
       try {
-        const response = await fetch(`http://localhost:8000/highest_bid/${auction.id}`);
+        const response = await fetch(`http://localhost:8000/auction_details/${auction.id}`);
         const data = await response.json();
-        if (data.highest_bid) {
-          setHighestBid(data.highest_bid.bid_amount);
-        } else {
-          setHighestBid("No bids yet");
-        }
+        setHighestBid(data.highest_bid?.bid_amount || "No bids yet");
+        setBidCount(data.total_bids || 0);
       } catch (error) {
-        toast.error("Failed to fetch the highest bid");
+        console.error("Failed to fetch auction details", error);
       }
     };
 
-    if (modalOpen) {
-      fetchHighestBid();
-    }
+    if (modalOpen) fetchAuctionData();
   }, [modalOpen, auction.id]);
 
-  // Handle placing bid
-  const handleBid = async () => {
-    if (bidValue <= 0) {
-      toast.error("Bid must be greater than 0.");
-      return;
-    }
-    
-    try {
-      const response = await fetch("http://localhost:8000/place_bid/", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          auction_id: auction.id,
-          bidder: "user_address_here", // Replace with user wallet address
-          bid_amount: parseFloat(bidValue),
-        }),
-      });
+  if (!modalOpen) return null;
 
-      if (!response.ok) throw new Error("Failed to place bid");
+  return ReactDOM.createPortal(
+    <div className="modal-overlay open" onClick={closeModal}>
+      <div className="modal-container" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <h2 className="modal-title">{auction.title}</h2>
+          <RiCloseFill size={24} onClick={closeModal} className="close-icon" />
+        </div>
 
-      toast.success(`Bid of ${bidValue} placed successfully`);
-      closeModal();
-    } catch (error) {
-      toast.error(error.message);
-    }
-  };
-
-  // Format dates for display
-  const formattedStartDate = formatDate(auction.start_date);
-  const formattedEndDate = formatDate(auction.end_date);
-
-  return (
-    <div className={`${modalOpen ? "modal-background" : "hidden"}`}>
-  <div className="modal-container">
-    {/* Modal Header */}
-    <div className="modal-header">
-      <h1 className="modal-title">Auction Details</h1>
-      <RiCloseFill size={24} onClick={closeModal} className="close-icon" />
-    </div>
-
-    {/* Modal Content */}
-    <div className="modal-content">
-      {/* Left Side - Auction Details */}
-      <div className="auction-details">
-        <h2>{auction.title}</h2>
-        <p className="text-gray-600">{auction.description}</p>
-
-        <div className="space-y-4 mt-4">
-          <div>
-            <span className="detail-label">Carbon Credits</span>
-            <p className="detail-value">{auction.carbonCredit}</p>
+        <div className="modal-body">
+          <div className="modal-image">
+            {auction.satelliteImageUrl ? (
+              <img
+                src={auction.satelliteImageUrl}
+                alt="Auction item"
+                className="auction-image"
+              />
+            ) : (
+              <div className="no-image">No Image Available</div>
+            )}
           </div>
-          <div>
-            <span className="detail-label">Carbon Offset Score</span>
-            <p className="detail-value">{auction.predicted_score} tons</p>
-          </div>
-          <div className="flex items-center">
-            <span className="detail-label mr-2">Creator</span>
-            <Jazzicon diameter={25} seed={Math.round(Math.random() * 10000000)} />
-            <p className="detail-value ml-2">
-              {auction.creator && typeof auction.creator === "string"
-                ? `${auction.creator.substring(0, 6)}...${auction.creator.substring(auction.creator.length - 4)}`
-                : "Unknown"}
-            </p>
-          </div>
-          <div>
-            <span className="detail-label">Start Date</span>
-            <p className="detail-value">{formattedStartDate}</p>
-          </div>
-          <div>
-            <span className="detail-label">End Date</span>
-            <p className="detail-value">{formattedEndDate}</p>
+
+          <div className="modal-details">
+            <p className="description">{auction.description}</p>
+
+            <div className="details-list">
+              <div className="detail-item">
+                <span className="detail-label">Carbon Credits:</span>
+                <span className="detail-value">{auction.carbonCredit}</span>
+              </div>
+              <div className="detail-item">
+                <span className="detail-label">Carbon Offset Score:</span>
+                <span className="detail-value">{auction.predicted_score} tons</span>
+              </div>
+              <div className="detail-item">
+                <span className="detail-label">Start Date:</span>
+                <span className="detail-value">{formatDate(auction.start_date)}</span>
+              </div>
+              <div className="detail-item">
+                <span className="detail-label">End Date:</span>
+                <span className="detail-value">{formatDate(auction.end_date)}</span>
+              </div>
+              <div className="detail-item">
+                <span className="detail-label">Starting Bid:</span>
+                <span className="detail-value">{auction.startingBid || "N/A"} KES</span>
+              </div>
+              <div className="detail-item">
+                <span className="detail-label">Current Highest Bid:</span>
+                <span className="detail-value">{highestBid} KES</span>
+              </div>
+              <div className="detail-item">
+                <span className="detail-label">Total Bids:</span>
+                <span className="detail-value">{bidCount}</span>
+              </div>
+              <div className="detail-item">
+                <span className="detail-label">Creator:</span>
+                <div className="creator-info">
+                  <Jazzicon diameter={25} seed={Math.round(Math.random() * 10000000)} />
+                  <span className="creator-name">
+                    {auction.creator && typeof auction.creator === "string"
+                      ? `${auction.creator.substring(0, 6)}...${auction.creator.substring(auction.creator.length - 4)}`
+                      : "Unknown"}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {!auctionFinished ? (
+              <div className="bidding-section">
+                <p className="highest-bid">
+                  Highest Bid: {highestBid !== null ? highestBid : "Loading..."}
+                </p>
+                <div className="bid-input-group">
+                  <input
+                    type="number"
+                    placeholder="Enter your bid"
+                    className="bid-input"
+                    value={bidValue}
+                    onChange={(e) => setBidValue(e.target.value)}
+                  />
+                  <button
+                    onClick={() => alert("Place Bid Clicked")} // Replace with your bid logic
+                    disabled={bidValue <= 0}
+                    className="button bid-button"
+                  >
+                    Place Bid
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="auction-ended">
+                <p>Auction has ended.</p>
+              </div>
+            )}
           </div>
         </div>
       </div>
-
-      {/* Right Side - Auction Image */}
-      <div className="flex justify-center">
-        {auction.satelliteImageUrl ? (
-          <img
-            src={auction.satelliteImageUrl}
-            alt="Auction item"
-            className="rounded-xl object-cover w-80 h-80"
-          />
-        ) : (
-          <div className="bg-gray-200 w-80 h-80 rounded-xl flex items-center justify-center">
-            <span>No Image Available</span>
-          </div>
-        )}
-      </div>
-    </div>
-
-    {/* Divider */}
-    <div className="h-[2px] my-4 bg-gray-300"></div>
-
-    {/* Bidding Section */}
-    {!auctionFinished ? (
-      <div className="bidding-section">
-        <label className="font-semibold">Place your bid</label>
-        <div className="bid-input-container">
-          <p className="highest-bid">Highest Bid: {highestBid !== null ? highestBid : "Loading..."}</p>
-          <input
-            type="number"
-            placeholder="Enter bid value"
-            className="bid-input"
-            value={bidValue}
-            onChange={(e) => setBidValue(Number(e.target.value))}
-          />
-          <button
-            onClick={handleBid}
-            disabled={bidValue <= 0}
-            className="bid-button"
-          >
-            Place Bid
-          </button>
-        </div>
-      </div>
-    ) : (
-      <div className="auction-ended">Auction has ended.</div>
-    )}
-  </div>
-</div>
-
+    </div>,
+    document.getElementById("modal-root")
   );
 };
 

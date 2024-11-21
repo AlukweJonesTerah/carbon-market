@@ -5,7 +5,6 @@ import { useNavigate, useLocation } from "react-router-dom";
 import { Clock, Leaf, User } from "lucide-react";
 import "../../styles/MarketplaceCard.css";
 
-
 const MarketplaceCard = ({
   id,
   title = "No title",
@@ -110,7 +109,7 @@ const MarketplaceCard = ({
           </p>
           <p className="carbon-score">Carbon Credits Score: {predicted_score} Ton</p>
         </div>
-        <button onClick={toggleModal} className="see-more-button">
+        <button onClick={(e) => { e.stopPropagation(); toggleModal(); }} className="button">
           See more
         </button>
       </div>
