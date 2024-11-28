@@ -59,6 +59,7 @@ const AuctionCard = () => {
         }
 
         const data = await response.json();
+        console.log("Fetched auction data:", data); // Debugging log
         setAuctionData(data);
       } catch (error) {
         console.error('Error fetching auction data:', error);
@@ -87,7 +88,7 @@ const AuctionCard = () => {
           return;
         }
 
-        const response = await fetch(`http://localhost:8000/users/me`, {
+        const response = await fetch(`http://localhost:8000/me`, {
           method: 'GET',
           headers: {
             'Content-Type': 'application/json',
@@ -156,7 +157,6 @@ const AuctionCard = () => {
     fetchCreatorUsername();
   }, [auctionData?.creator_id, navigate]);
 
-  // Destructure auction data
   const {
     title,
     map_url,
@@ -166,9 +166,9 @@ const AuctionCard = () => {
     end_date,
     predicted_score,
     creator_id,
+    creator_address, // Include additional fields
   } = auctionData || {};
 
-  // Calculate time remaining
   useEffect(() => {
     if (!end_date) {
       setTimeToFinish("No end date provided.");
@@ -199,67 +199,45 @@ const AuctionCard = () => {
     }
   }, [end_date]);
 
-  // Handle Edit Button Click
-  const handleEdit = () => {
-    navigate(`/edit-auction/${id}`, { state: { auctionData } });
-  };
-
-  // Handle Bid Button Click
-  const handlePlaceBid = () => {
-    navigate(`/place-bid/${id}`, { state: { auctionData } });
-  };
-
   return (
     <div className="auction-card">
-        {errorMessage && <p className="error-message">{errorMessage}</p>}
-  
-        <div className="auction-image-container">
-          {map_url ? (
-            <img
-              src={map_url}
-              alt="Auction item"
-              className="auction-image"
-            />
-          ) : (
-            <div className="no-image">
-              <span>No Image Available</span>
-            </div>
-          )}
-          <div className="time-remaining">
-            <label>{timeToFinish}</label>
-          </div>
-        </div>
-  
-        <div className="auction-details">
-          <h1 className="auction-title">{title || "No title"}</h1>
-          <p className="auction-description">{description || "No description"}</p>
-        </div>
-  
-        <div className="creator-info">
-          <Jazzicon diameter={30} seed={Math.round(Math.random() * 10000000)} />
-          <label className="creator-username">{creatorUsername}</label>
-        </div>
-  
-        <hr className="divider" />
-  
-        <div className="carbon-info">
-          <p className="info-label info-value">
-            Carbon Credits: {carbon_credit_amount || "N/A"}
-          </p>
-          <p className="info-label info-value">
-            Carbon Offset Score: {predicted_score || "N/A"} Ton
-          </p>
-        </div>
+      {errorMessage && <p className="error-message">{errorMessage}</p>}
 
-        <div className="action-buttons">
-          {currentUserId === creator_id && (
-            <button onClick={handleEdit} className="edit-button">Edit Auction</button>
-          )}
-          <button onClick={handlePlaceBid} className="bid-button">Place Bid</button>
+      <div className="auction-image-container">
+        {map_url ? (
+          <img src={map_url} alt="Auction item" className="auction-image" />
+        ) : (
+          <div className="no-image">
+            <span>No Image Available</span>
+          </div>
+        )}
+        <div className="time-remaining">
+          <label>{timeToFinish}</label>
         </div>
+      </div>
+
+      <div className="auction-details">
+        <h1 className="auction-title">{title || "No title"}</h1>
+        <p className="auction-description">{description || "No description"}</p>
+        <p className="info-label">Carbon Credits: {carbon_credit_amount || "N/A"}</p>
+        <p className="info-label">Predicted Score: {predicted_score || "N/A"}</p>
+        <p className="info-label">Start Date: {start_date || "N/A"}</p>
+        <p className="info-label">End Date: {end_date || "N/A"}</p>
+        <p className="info-label">Creator CELO Address: {creator_address || "N/A"}</p>
+      </div>
+
+      <div className="action-buttons">
+        {currentUserId === creator_id && (
+          <button onClick={() => navigate(`/edit-auction/${id}`)} className="edit-button">
+            Edit Auction
+          </button>
+        )}
+        <button onClick={() => navigate(`/place-bid/${id}`)} className="bid-button">
+          Place Bid
+        </button>
+      </div>
     </div>
   );
-  
 };
 
 export default AuctionCard;

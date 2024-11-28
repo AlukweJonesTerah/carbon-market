@@ -12,6 +12,7 @@
     justify-content: center;
     align-items: center;
     z-index: 50;
+    overflow-y: auto; /* Prevents content from overflowing vertically */
   }
   
   /* Modal Container */
@@ -22,11 +23,19 @@
     border-radius: 12px;
     overflow: hidden;
     animation: fadeIn 0.3s ease-out;
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.2); /* Elevated card-like shadow */
+    margin: 20px auto; /* Adds spacing for better centering */
   }
   
   @keyframes fadeIn {
-    from { opacity: 0; transform: translateY(-20px); }
-    to { opacity: 1; transform: translateY(0); }
+    from {
+      opacity: 0;
+      transform: translateY(-20px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
   }
   
   /* Modal Header */
@@ -36,6 +45,7 @@
     align-items: center;
     padding: 16px;
     border-bottom: 1px solid #e5e7eb; /* Tailwind Gray-200 */
+    background-color: #f9fafb; /* Tailwind Gray-100 */
   }
   
   .modal-title {
@@ -47,6 +57,7 @@
   .close-icon {
     cursor: pointer;
     color: #6b7280; /* Tailwind Gray-500 */
+    transition: color 0.2s;
   }
   
   .close-icon:hover {
@@ -56,22 +67,12 @@
   /* Modal Body */
   .modal-body {
     display: flex;
-    flex-wrap: wrap;
+    gap: 16px; /* Adds spacing between the image and details */
     padding: 16px;
-  }
-  
-  .modal-image, .modal-details {
-    flex: 1 1 100%;
-  }
-  
-  @media (min-width: 640px) {
-    .modal-image, .modal-details {
-      flex: 1 1 50%;
-    }
   }
   
   .modal-image {
-    padding: 16px;
+    flex: 1;
     display: flex;
     justify-content: center;
     align-items: center;
@@ -79,14 +80,15 @@
   
   .auction-image {
     width: 100%;
-    max-width: 350px;
+    max-width: 300px;
     border-radius: 8px;
+    border: 1px solid #d1d5db; /* Tailwind Gray-300 */
   }
   
   .no-image {
     width: 100%;
-    max-width: 350px;
-    height: 350px;
+    max-width: 300px;
+    height: 200px;
     background-color: #f3f4f6; /* Tailwind Gray-100 */
     display: flex;
     justify-content: center;
@@ -94,65 +96,51 @@
     border-radius: 8px;
     color: #9ca3af; /* Tailwind Gray-400 */
     font-size: 1rem;
+    border: 2px dashed #d1d5db;
   }
   
+  /* Modal Details Section */
   .modal-details {
-    padding: 16px;
+    flex: 2;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
   }
   
   .description {
     font-size: 1rem;
     color: #4b5563; /* Tailwind Gray-600 */
-    margin-bottom: 16px;
     line-height: 1.5;
   }
   
   .details-list {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 8px;
   }
   
   .detail-item {
     display: flex;
-    align-items: center;
+    justify-content: space-between;
+    font-size: 0.95rem;
   }
   
   .detail-label {
     font-weight: 600;
     color: #1f2937; /* Tailwind Gray-800 */
-    min-width: 140px;
   }
   
   .detail-value {
     color: #4b5563; /* Tailwind Gray-600 */
   }
   
-  .creator-info {
-    display: flex;
-    align-items: center;
-  }
-  
-  .creator-info .creator-name {
-    margin-left: 8px;
-    color: #4b5563;
-  }
-  
   /* Bidding Section */
   .bidding-section {
-    margin-top: 24px;
-  }
-  
-  .highest-bid {
-    font-size: 1rem;
-    color: #1f2937;
-    font-weight: 600;
-    margin-bottom: 8px;
+    margin-top: 16px;
   }
   
   .bid-input-group {
     display: flex;
-    align-items: center;
     gap: 8px;
   }
   
@@ -164,15 +152,37 @@
     font-size: 1rem;
   }
   
-  .bid-button {
-    padding: 10px 16px;
+  .bid-input:focus {
+    outline: none;
+    border-color: #2563eb; /* Tailwind Blue-500 */
   }
   
+  .bid-button {
+    padding: 10px 16px;
+    background-color: #2563eb; /* Tailwind Blue-500 */
+    color: #ffffff;
+    font-weight: 600;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  
+  .bid-button:hover {
+    background-color: #1d4ed8; /* Tailwind Blue-600 */
+  }
+  
+  .bid-button:disabled {
+    background-color: #9ca3af; /* Tailwind Gray-400 */
+    cursor: not-allowed;
+  }
+  
+  /* Auction Ended Section */
   .auction-ended {
-    margin-top: 24px;
-    font-size: 1.1rem;
+    margin-top: 16px;
+    font-size: 1rem;
     color: #ef4444; /* Tailwind Red-500 */
     font-weight: 600;
+    text-align: center;
   }
   
   /* Responsive Adjustments */
@@ -181,7 +191,8 @@
       flex-direction: column;
     }
   
-    .modal-image, .modal-details {
+    .modal-image,
+    .modal-details {
       flex: 1 1 100%;
     }
   }

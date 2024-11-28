@@ -1,9 +1,10 @@
 from fastapi import FastAPI, HTTPException, Depends, Query, status,  APIRouter, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi_limiter import FastAPILimiter
 from fastapi_limiter.depends import RateLimiter
-from pydantic import BaseModel, validator, Field, PositiveFloat, field_validator
+from pydantic import BaseModel, ValidationError, validator, Field, PositiveFloat, field_validator
 from jwt import ExpiredSignatureError, InvalidTokenError
 from typing import List, Optional, Union
 import os
@@ -94,17 +95,17 @@ class AuctionData(BaseModel):
     coordinates: List[str]
     predicted_score: float = Field(..., gt=0, description="Predicted carbon credits in tons.")
     total_carbon_tonnage: float = Field(..., gt=0, description="Total carbon tonnage for the project.")
-    carbon_credit_amount: Optional[Decimal] = None  # Calculated on the backend
+    carbon_credit_amount: Optional[Decimal] = 0  # Calculated on the backend
 
     # Constants (prefixed with underscore to indicate they are not fields)
     _COST_PER_TON_KES: Decimal = Decimal("0.5")  # Conversion rate for 1 ton in KSH
     _BUFFER_PERCENTAGE: Decimal = Decimal("1.3")   # 130% maximum buffer
 
     # Calculated fields (not required in user input)
-    estimated_cost_per_ton: Optional[Decimal] = None
-    total_estimated_cost: Optional[Decimal] = None
-    min_carbon_credit: Optional[Decimal] = None
-    max_carbon_credit: Optional[Decimal] = None
+    estimated_cost_per_ton: Optional[Decimal] = 0
+    total_estimated_cost: Optional[Decimal] = 0
+    min_carbon_credit: Optional[Decimal] = 0
+    max_carbon_credit: Optional[Decimal] = 0
 
     @validator("start_date")
     def validate_start_date(cls, v):
@@ -458,6 +459,18 @@ async def generate_token(form_data: OAuth2PasswordRequestForm = Depends()):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="Token generation error")
       
+@app.post("/refresh_token/")
+async def refresh_token(current_user: dict = Depends(get_current_user)):
+    try:
+        if not current_user:
+            raise HTTPException(status_code=401, detail="Unauthorized")
+
+        # Generate a new token
+        new_token = create_access_token(data={"sub": current_user["_id"]})
+        return {"access_token": new_token, "token_type": "bearer"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Failed to refresh token")
+
 def notify_admin(message: str):
     # Placeholder for sending notifications (e.g., email or alert)
     print("Admin Notification:", message)
@@ -495,7 +508,7 @@ CELO_TO_USD = Decimal("0.647801")
 CELO_TO_KES = Decimal("78.75")
 
 # View current user profile with Celo balance in CELO, USD, and KES
-@router.get("/profile/")
+@app.get("/profile/")
 async def get_user_profile(current_user: dict = Depends(get_current_user)):
     try:
         # Fetch Celo balance from autofundAccount script
@@ -541,7 +554,7 @@ async def get_user_profile(current_user: dict = Depends(get_current_user)):
 #     }
 
 # Get minimal current user info (no need for two separate /me endpoints)
-@router.get("/me")
+@app.get("/me")
 async def get_current_user_profile(current_user: dict = Depends(get_current_user)):
     return {
         "_id": str(current_user["_id"]),
@@ -750,51 +763,68 @@ async def transfer_ckes_to_user(request):
 
 @app.post("/process_coordinates/")
 async def process_coordinates(request: CoordinatesRequest, current_user: dict = Depends(get_current_user)):
-    # Ensure authorization with current_user
-    if not current_user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized access")
-
     try:
+        if not current_user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Unauthorized access"
+            )
+
         joined_coordinates = "|".join(request.coordinates)
         map_url = (
             f"https://maps.googleapis.com/maps/api/staticmap?size=400x400&maptype=satellite&"
             f"path=color:0xff0000ff|weight:5|{joined_coordinates}&key={GOOGLE_MAPS_API_KEY}"
         )
 
-        # Fetch map and check response
         async with httpx.AsyncClient() as client:
             response = await client.get(map_url)
-        if response.status_code != 200:
-            raise HTTPException(status_code=400, detail="Error fetching map image")
 
-        # Process the map image and predict the score
+        if response.status_code != 200:
+            raise HTTPException(
+                status_code=400,
+                detail="Error fetching map image from Google Maps API"
+            )
+
         nparr = np.frombuffer(response.content, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         img = cv2.resize(img, (256, 256)) / 255.0
         img = np.expand_dims(img, axis=0).astype(np.float32)
 
-        input_index = interpreter.get_input_details()[0]['index']
+        input_index = interpreter.get_input_details()[0]["index"]
         interpreter.set_tensor(input_index, img)
         interpreter.invoke()
 
-        output_index = interpreter.get_output_details()[0]['index']
+        output_index = interpreter.get_output_details()[0]["index"]
         predicted_score = round(float(interpreter.get_tensor(output_index)[0][0]), 1)
 
-        # Store processed data
         coordinates_data = {
             "user_id": str(current_user["_id"]),
             "coordinates": request.coordinates,
             "map_url": map_url,
             "predicted_score": predicted_score,
-            "processed_at": datetime.utcnow().isoformat()
+            "processed_at": datetime.utcnow().isoformat(),
         }
-        await user_coordinates_collection.replace_one({"user_id": str(current_user["_id"])}, coordinates_data, upsert=True)
 
-        return {"predicted_score": predicted_score, "map_url": map_url, "message": "Coordinates processed successfully"}
+        await user_coordinates_collection.replace_one(
+            {"user_id": str(current_user["_id"])}, coordinates_data, upsert=True
+        )
 
+        return {
+            "predicted_score": predicted_score,
+            "map_url": map_url,
+            "message": "Coordinates processed successfully",
+        }
+    except ExpiredSignatureError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Your session has expired. Please log in again.",
+        )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to process coordinates: {str(e)}")
-    
+        print(f"Error processing coordinates: {str(e)}")
+        raise HTTPException(
+            status_code=500, detail="Failed to process coordinates. Please try again."
+        )
+   
 import tempfile
 import aiohttp
 import aiofiles
@@ -1009,10 +1039,38 @@ async def create_auction(data: AuctionData, current_user: dict = Depends(get_cur
             }
         }
 
+    except ValidationError as e:
+        print(f"Validation error: {e.json()}")
+        raise HTTPException(status_code=422, detail="Invalid input data")
     except Exception as e:
         print("Error creating auction:", e)
         raise HTTPException(status_code=500, detail=f"Failed to create auction: {str(e)}")
 
+from fastapi.exceptions import RequestValidationError
+
+from starlette.requests import Request
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+    # Ensure all error details are JSON-serializable
+    errors = []
+    for error in exc.errors():
+        error_detail = {
+            "type": error.get("type"),
+            "loc": error.get("loc"),
+            "msg": error.get("msg"),
+            "input": error.get("input"),
+            "ctx": error.get("ctx"),
+        }
+        # Serialize context errors like ValueError to strings
+        if error_detail["ctx"] and isinstance(error_detail["ctx"].get("error"), Exception):
+            error_detail["ctx"]["error"] = str(error_detail["ctx"]["error"])
+        errors.append(error_detail)
+
+    return JSONResponse(
+        status_code=422,
+        content={"detail": errors},
+    )
 
 @router.post("/explain_calculation/")
 async def explain_calculation(data: CalculationExplanationRequest) -> dict:
@@ -1199,7 +1257,6 @@ async def place_bid(bid: BidData, current_user: dict = Depends(get_current_user)
             "auction_id": bid.auction_id,
             "bidder_id": str(current_user["_id"])
         })
-        
         if user_bids_count >= MAX_BIDS_PER_USER:
             raise HTTPException(
                 status_code=400,
@@ -1250,7 +1307,18 @@ async def place_bid(bid: BidData, current_user: dict = Depends(get_current_user)
         }
         await bids_collection.insert_one(bid_data)
 
-        return {"message": "Bid placed successfully"}
+        # Fetch the updated highest bid
+        highest_bid = await bids_collection.find_one(
+            {"auction_id": bid.auction_id},
+            sort=[("bid_amount", -1)]
+        )
+
+        return {
+            "message": "Bid placed successfully",
+            "bid_data": bid_data,
+            "highest_bid": highest_bid,
+            "creator_address": auction.get("creator_address", "N/A"),
+        }
 
     except HTTPException as he:
         raise he
@@ -1258,28 +1326,117 @@ async def place_bid(bid: BidData, current_user: dict = Depends(get_current_user)
         print("Error placing bid:", e)
         raise HTTPException(status_code=500, detail=f"Failed to place bid: {str(e)}")
     
-# Endpoint to fetch the highest bid for an auction
 @app.get("/highest_bid/{auction_id}")
 async def get_highest_bid(auction_id: str):
     try:
+        # Validate auction ID format
+        if not ObjectId.is_valid(auction_id):
+            raise HTTPException(status_code=400, detail="Invalid auction ID format")
+
+        # Fetch the auction
+        auction = await auctions_collection.find_one({"_id": ObjectId(auction_id)})
+        if not auction:
+            raise HTTPException(status_code=404, detail="Auction not found")
+
+        # Check if auction is active
+        end_date = datetime.fromisoformat(auction['end_date'])
+        is_active = datetime.now() <= end_date
+
+        # Fetch the highest bid
         highest_bid = await bids_collection.find_one(
             {"auction_id": auction_id},
             sort=[("bid_amount", -1)]
         )
+        bid_count = await bids_collection.count_documents({"auction_id": auction_id})
+
+        return {
+            "auction_id": str(auction["_id"]),
+            "is_active": is_active,
+            "end_date": auction["end_date"],
+            "highest_bid": highest_bid,
+            "bid_count": bid_count,
+            "message": "Auction is active and accepting bids" if is_active else "Auction has ended"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve highest bid: {str(e)}")
+
+
+# Endpoint to fetch the highest bid for an auction
+@app.get("/highest_bid/{auction_id}")
+async def get_highest_bid(auction_id: str):
+    try:
+        print(f"Fetching highest bid for auction ID: {auction_id}")
+        highest_bid = await bids_collection.find_one(
+            {"auction_id": auction_id},
+            sort=[("bid_amount", -1)]
+        )
+        bid_count = await bids_collection.count_documents({"auction_id": auction_id})
 
         if not highest_bid:
-            return {"message": "No bids found for this auction"}
+            print("No bids found for this auction.")
+            return {"message": "No bids found for this auction", "bid_count": bid_count}
 
         highest_bid["_id"] = str(highest_bid["_id"])
         highest_bid["auction_id"] = str(highest_bid["auction_id"])
 
+        print(f"Highest bid found: {highest_bid}")
         return {
             "highest_bid": highest_bid,
+            "bid_count": bid_count,
             "bidder_address": highest_bid["bidder_address"]
         }
-
     except Exception as e:
+        print(f"Error retrieving highest bid: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to retrieve highest bid: {str(e)}")
+
+@app.get("/auction_details/{auction_id}")
+async def get_auction_details(auction_id: str):
+    try:
+        # Validate auction_id format
+        if not ObjectId.is_valid(auction_id):
+            raise HTTPException(status_code=400, detail="Invalid auction ID format")
+
+        # Fetch the auction by ID
+        auction = await auctions_collection.find_one({"_id": ObjectId(auction_id)})
+        if not auction:
+            raise HTTPException(status_code=404, detail="Auction not found")
+
+        # Fetch highest bid details
+        highest_bid = await bids_collection.find_one(
+            {"auction_id": auction_id}, sort=[("bid_amount", -1)]
+        )
+        bid_count = await bids_collection.count_documents({"auction_id": auction_id})
+
+        # Handle start and end dates
+        start_date = auction.get("start_date")
+        end_date = auction.get("end_date")
+
+        formatted_start_date = start_date if start_date else "Invalid Date"
+        formatted_end_date = end_date if end_date else "Invalid Date"
+
+        return {
+            "auction": {
+                "id": str(auction["_id"]),
+                "title": auction["title"],
+                "description": auction["description"],
+                "start_date": formatted_start_date,
+                "end_date": formatted_end_date,
+                "satelliteImageUrl": auction.get("map_url"),
+                "carbonCredit": auction.get("carbon_credit_amount"),
+                "predicted_score": auction.get("predicted_score"),
+                "startingBid": auction.get("startingBid", "N/A"),
+                "creator": auction.get("creator_username", "Unknown"),
+                "creator_address": auction.get("creator_address", "N/A"),
+            },
+            "highest_bid": highest_bid,
+            "total_bids": bid_count,
+        }
+    except HTTPException as e:
+        print(f"Error in get_auction_details: {str(e)}")
+        raise e
+    except Exception as e:
+        print(f"Unexpected error in get_auction_details: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 
 import asyncio

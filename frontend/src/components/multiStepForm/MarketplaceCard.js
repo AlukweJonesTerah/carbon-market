@@ -1,39 +1,32 @@
-import React, { useEffect, useState } from "react";
+// MarketplaceCard.js
+import React, { useState, useEffect } from "react";
 import Jazzicon from "react-jazzicon";
 import { AuctionModal } from "./AuctionModal";
-import { useNavigate, useLocation } from "react-router-dom";
 import { Clock, Leaf, User } from "lucide-react";
 import "../../styles/MarketplaceCard.css";
 
 const MarketplaceCard = ({
   id,
-  title = "No title",
-  satelliteImageUrl = "",
-  description = "No description",
-  carbonCredit = "N/A",
-  predicted_score = "N/A",
+  title,
+  satelliteImageUrl,
+  description,
+  carbonCredit,
+  predicted_score,
   startDate,
   endDate,
-  creator = "Unknown",
+  creator,
+  creatorAddress,
+  startingBid,
+  bidCount,
+  highestBid,
 }) => {
-  const navigate = useNavigate();
-  const location = useLocation();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [timeToFinish, setTimeToFinish] = useState("");
 
-  // Toggle the modal
-  const toggleModal = () => {
-    setIsModalOpen(!isModalOpen);
-  };
+  // Toggle Modal
+  const toggleModal = () => setIsModalOpen(!isModalOpen);
 
-  // Open modal if redirected back from login
-  useEffect(() => {
-    if (location.state?.openModal && location.state?.auctionId === id) {
-      setIsModalOpen(true);
-    }
-  }, [location.state, id]);
-
-  // Calculate time remaining
+  // Calculate Time Remaining
   useEffect(() => {
     if (!endDate) {
       setTimeToFinish("No end date");
@@ -60,19 +53,6 @@ const MarketplaceCard = ({
     return () => clearInterval(interval);
   }, [endDate]);
 
-  // Display creator
-  const displayCreator = () => {
-    if (creator && typeof creator === "string") {
-      if (creator.length > 10) {
-        return `${creator.substring(0, 6)}...${creator.substring(creator.length - 4)}`;
-      } else {
-        return creator;
-      }
-    } else {
-      return "Unknown";
-    }
-  };
-
   return (
     <div className="marketplace-card">
       <div className="image-container">
@@ -91,32 +71,50 @@ const MarketplaceCard = ({
         <p className="description">{description}</p>
       </div>
 
-      <div className="creator-info">
-        <Jazzicon diameter={35} seed={Math.round(Math.random() * 10000000)} />
-        <div className="creator-details">
-          <User size={16} strokeWidth={2} className="inline-block mr-1 text-blue-500" />
-          <label className="creator-name">{displayCreator()}</label>
+      {/* Creator Info */}
+      <div className="creator-info-container">
+        <div className="creator-info">
+          <Jazzicon diameter={35} seed={Math.round(Math.random() * 10000000)} />
+          <div className="creator-details">
+            <User size={18} strokeWidth={2} />
+            <span className="creator-name">{creator}</span>
+          </div>
         </div>
       </div>
 
+      {/* Divider */}
       <hr className="divider" />
 
       <div className="carbon-info">
-        <div>
-          <p className="carbon-credit">
-            <Leaf size={16} strokeWidth={2} className="inline-block mr-1 text-green-500" /> 
-            Carbon Credits: {carbonCredit}
-          </p>
-          <p className="carbon-score">Carbon Credits Score: {predicted_score} Ton</p>
-        </div>
-        <button onClick={(e) => { e.stopPropagation(); toggleModal(); }} className="button">
-          See more
+        <p className="carbon-credit">
+          <Leaf size={16} strokeWidth={2} className="inline-block mr-1 text-green-500" />
+          Carbon Credits: {carbonCredit}
+        </p>
+        <p className="carbon-score">Score: {predicted_score} Ton</p>
+        <p className="starting-bid">Starting Bid: {startingBid} KES</p>
+        <p className="bid-count">Total Bids: {bidCount}</p>
+        <button onClick={toggleModal} className="button">
+          See More
         </button>
       </div>
 
       {isModalOpen && (
         <AuctionModal
-          auction={{ id, title, satelliteImageUrl, description, carbonCredit, predicted_score, startDate, endDate, creator }}
+          auction={{
+            id,
+            title,
+            satelliteImageUrl,
+            description,
+            carbonCredit,
+            predicted_score,
+            startDate,
+            endDate,
+            creator,
+            creatorAddress,
+            startingBid,
+            bidCount,
+            highestBid,
+          }}
           modalOpen={isModalOpen}
           closeModal={toggleModal}
         />

@@ -2,14 +2,16 @@ import React, { useState, useEffect, useContext, useCallback } from "react";
 import { useForm } from "react-hook-form";
 import { AiOutlineMinus, AiOutlinePlus, AiOutlineEnvironment } from "react-icons/ai";
 import { FaMap, FaChevronRight } from "react-icons/fa";
-import { PuffLoader } from 'react-spinners';
-import { AuthContext } from './AuthContext';
-import { useNavigate } from "react-router-dom";
-import '../../styles/CoordinateForm.css';
+import { PuffLoader } from "react-spinners";
+import { AuthContext } from "./AuthContext";
+import { useNavigate, useLocation } from "react-router-dom";
+import "../../styles/CoordinateForm.css";
 
 const CoordinateForm = ({ onNext }) => {
   const { token } = useContext(AuthContext);
   const navigate = useNavigate();
+  const location = useLocation();
+
   const [inputQuantity, setInputQuantity] = useState(1);
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState(null);
@@ -17,12 +19,12 @@ const CoordinateForm = ({ onNext }) => {
   const [predictedScore, setPredictedScore] = useState(null);
   const [coordinatesState, setCoordinatesState] = useState([]);
 
-  const { 
-    register, 
-    handleSubmit, 
-    setValue, 
+  const {
+    register,
+    handleSubmit,
+    setValue,
     watch,
-    formState: { errors } 
+    formState: { errors },
   } = useForm({
     defaultValues: {
       coordinates: [""],
@@ -32,44 +34,43 @@ const CoordinateForm = ({ onNext }) => {
   const watchCoordinates = watch("coordinates");
 
   useEffect(() => {
-    const token = localStorage.getItem("token");
     if (!token) {
       setErrorMessage("You are not logged in. Please log in to create an auction.");
       navigate("/Login");
     }
-  }, [navigate]);
+  }, [navigate, token]);
 
   useEffect(() => {
     const savedCoordinateData = JSON.parse(localStorage.getItem("coordinateData"));
     if (savedCoordinateData) {
       setValue("coordinates", savedCoordinateData.coordinates || [""]);
-      setInputQuantity(savedCoordinateData.coordinates ? savedCoordinateData.coordinates.length : 1);
+      setInputQuantity(
+        savedCoordinateData.coordinates ? savedCoordinateData.coordinates.length : 1
+      );
       setPredictedScore(savedCoordinateData.predictedScore || null);
       setMapUrl(savedCoordinateData.mapUrl || null);
     }
   }, [setValue]);
 
   const increaseInput = () => setInputQuantity((prev) => prev + 1);
-  
+
   const decreaseInput = useCallback(() => {
     if (inputQuantity > 1) {
       setInputQuantity((prev) => prev - 1);
-      // Remove the last coordinate when decreasing inputs
       const updatedCoordinates = watchCoordinates.slice(0, -1);
       setValue("coordinates", updatedCoordinates);
     }
   }, [inputQuantity, watchCoordinates, setValue]);
 
   const isValidCoordinate = (coordinate) => {
-    // Basic coordinate validation (adjust regex as needed)
-    const coordinateRegex = /^[-+]?([1-8]?\d(\.\d+)?|90(\.0+)?),\s*[-+]?(180(\.0+)?|((1[0-7]\d)|([1-9]?\d))(\.\d+)?)$/;
+    const coordinateRegex =
+      /^[-+]?([1-8]?\d(\.\d+)?|90(\.0+)?),\s*[-+]?((1[0-7]\d)|([1-9]?\d))(\.\d+)?$/;
     return coordinateRegex.test(coordinate);
   };
 
   const onSubmit = async (data) => {
-    // Validate all coordinates before submission
-    const invalidCoordinates = data.coordinates.filter(coord => !isValidCoordinate(coord.trim()));
-    
+    const invalidCoordinates = data.coordinates.filter((coord) => !isValidCoordinate(coord.trim()));
+
     if (invalidCoordinates.length > 0) {
       setErrorMessage("Please enter valid coordinates in the format: latitude, longitude");
       return;
@@ -77,8 +78,8 @@ const CoordinateForm = ({ onNext }) => {
 
     setLoading(true);
     setErrorMessage(null);
+
     try {
-      const token = localStorage.getItem("token");
       if (!token) {
         setErrorMessage("You are not logged in. Please log in to create an auction.");
         navigate("/Login");
@@ -89,23 +90,24 @@ const CoordinateForm = ({ onNext }) => {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
+          Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ 
-          coordinates: data.coordinates.map(coord => coord.trim()) 
+        body: JSON.stringify({
+          coordinates: data.coordinates.map((coord) => coord.trim()),
         }),
       });
 
+      if (response.status === 401) {
+        setErrorMessage("Session expired. Redirecting to login...");
+        localStorage.removeItem("token");
+        navigate("/Login");
+        return;
+      }
+
       if (!response.ok) {
-        if (response.status === 401) {
-          setErrorMessage("Unauthorized access. Please log in again.");
-          localStorage.removeItem("token");
-          navigate("/Login");
-          return;
-        }
         const errorData = await response.json();
-        setErrorMessage(errorData.detail || "An error occurred");
-        throw new Error(`Failed to process coordinates: ${response.status} ${response.statusText}`);
+        setErrorMessage(errorData.detail || "An error occurred while processing coordinates.");
+        throw new Error(`Error: ${response.status} - ${response.statusText}`);
       }
 
       const result = await response.json();
@@ -123,8 +125,8 @@ const CoordinateForm = ({ onNext }) => {
       );
 
       if (onNext) onNext(data.coordinates, result.predicted_score, result.map_url);
-
     } catch (error) {
+      console.error("Failed to process coordinates:", error);
       setErrorMessage("Failed to process the coordinates. Please try again.");
     } finally {
       setLoading(false);
@@ -133,7 +135,7 @@ const CoordinateForm = ({ onNext }) => {
 
   const handleRedirect = () => {
     if (!mapUrl || !predictedScore) {
-      setErrorMessage("Please submit the coordinates first.");
+      setErrorMessage("Please submit valid coordinates and process them before proceeding.");
     } else {
       navigate("/create-auction", {
         state: { coordinates: coordinatesState, predictedScore, mapUrl },
@@ -144,7 +146,7 @@ const CoordinateForm = ({ onNext }) => {
   return (
     <div className="coordinate-form">
       <h4 className="form-title">
-        <AiOutlineEnvironment className="title-icon" /> 
+        <AiOutlineEnvironment className="title-icon" />
         Choose Coordinates of Your Preservation Area
       </h4>
       <form onSubmit={handleSubmit(onSubmit)} className="coordinate-inputs">
@@ -152,11 +154,12 @@ const CoordinateForm = ({ onNext }) => {
           <div key={index} className="coordinate-input-wrapper">
             <input
               key={index}
-              className={`coordinate-input ${errors.coordinates?.[index] ? 'input-error' : ''}`}
+              className={`coordinate-input ${errors.coordinates?.[index] ? "input-error" : ""}`}
               placeholder={`Coordinate ${index + 1} (e.g., 40.7128, -74.0060)`}
-              {...register(`coordinates[${index}]`, { 
+              {...register(`coordinates[${index}]`, {
                 required: "Coordinate is required",
-                validate: value => isValidCoordinate(value.trim()) || "Invalid coordinate format"
+                validate: (value) =>
+                  isValidCoordinate(value.trim()) || "Invalid coordinate format",
               })}
             />
             {errors.coordinates?.[index] && (
@@ -165,19 +168,19 @@ const CoordinateForm = ({ onNext }) => {
           </div>
         ))}
         <div className="button-group">
-          <button 
-            type="button" 
-            onClick={increaseInput} 
-            className="btn-icon" 
+          <button
+            type="button"
+            onClick={increaseInput}
+            className="btn-icon"
             aria-label="Add coordinate input"
             title="Add Coordinate"
           >
             <AiOutlinePlus />
           </button>
-          <button 
-            type="button" 
-            onClick={decreaseInput} 
-            className="btn-icon" 
+          <button
+            type="button"
+            onClick={decreaseInput}
+            className="btn-icon"
             aria-label="Remove coordinate input"
             title="Remove Coordinate"
             disabled={inputQuantity <= 1}
@@ -185,11 +188,7 @@ const CoordinateForm = ({ onNext }) => {
             <AiOutlineMinus />
           </button>
         </div>
-        <button 
-          type="submit" 
-          className="submit-button" 
-          disabled={loading}
-        >
+        <button type="submit" className="submit-button" disabled={loading}>
           {loading ? (
             <>
               <PuffLoader size={20} color="white" />
@@ -217,9 +216,9 @@ const CoordinateForm = ({ onNext }) => {
         </div>
       )}
 
-      <button 
-        type="button" 
-        onClick={handleRedirect} 
+      <button
+        type="button"
+        onClick={handleRedirect}
         className="auction-button"
         disabled={!mapUrl || !predictedScore}
       >

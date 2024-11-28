@@ -1,6 +1,7 @@
+// AuctionList.js
 import React, { useEffect, useState } from 'react';
 import MarketplaceCard from './MarketplaceCard';
-import { Search, Filter } from 'lucide-react';
+import { Search } from 'lucide-react';
 import "../../styles/MarketplaceCard.css";
 
 const AuctionList = () => {
@@ -14,11 +15,15 @@ const AuctionList = () => {
   useEffect(() => {
     const fetchAuctions = async () => {
       try {
-        const response = await fetch("http://localhost:8000/auctions");
+        const response = await fetch("http://localhost:8000/auctions/");
         if (!response.ok) throw new Error("Failed to fetch auctions");
 
         const data = await response.json();
-        setAuctions(data.auctions);
+        // Sort auctions by created_at or end_date in descending order
+        const sortedAuctions = data.auctions.sort(
+          (a, b) => new Date(b.created_at || b.end_date) - new Date(a.created_at || a.end_date)
+        );
+        setAuctions(sortedAuctions);
       } catch (error) {
         setError(error.message);
       } finally {
@@ -30,7 +35,7 @@ const AuctionList = () => {
 
   // Filter Auctions
   useEffect(() => {
-    const filtered = auctions.filter((auction) => 
+    const filtered = auctions.filter((auction) =>
       auction.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
       auction.description.toLowerCase().includes(searchTerm.toLowerCase())
     );
@@ -68,7 +73,7 @@ const AuctionList = () => {
 
   return (
     <div>
-      {/* Search and Filter Section */}
+      {/* Search Section */}
       <div className="search-filter-container">
         <div className="search-bar">
           <Search className="search-icon" size={20} />
@@ -76,15 +81,20 @@ const AuctionList = () => {
             type="text"
             placeholder="Search auctions..."
             value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
+            onChange={(e) => {
+              const trimmedValue = e.target.value.trimStart();
+              if (trimmedValue !== "") {
+                setSearchTerm(trimmedValue);
+              } else {
+                setSearchTerm("");
+              }
+            }}
             className="search-input"
           />
         </div>
-        <button className="button filter-button">
-          <Filter size={20} />
-        </button>
       </div>
 
+     {/* Auction Grid */}
       {/* Auction Grid */}
       <div className="auction-grid">
         {filteredAuctions.map((auction) => (
@@ -95,13 +105,26 @@ const AuctionList = () => {
             satelliteImageUrl={auction.map_url}
             description={auction.description}
             carbonCredit={auction.carbon_credit_amount}
+            predicted_score={auction.predicted_score}
             startDate={auction.start_date}
             endDate={auction.end_date}
-            predicted_score={auction.predicted_score}
-            creator={auction.creator || "Unknown"}
+            creator={
+              auction.creator_info.celoAddress
+                ? auction.creator_info.celoAddress.substring(0, 6)
+                : "Unknown"
+            }
+            creatorAddress={
+              auction.creator_info.celoAddress
+                ? auction.creator_info.celoAddress.substring(0, 6)
+                : "Unknown"
+            }
+            startingBid={auction.starting_bid || "N/A"}
+            bidCount={auction.bid_count || 0}
+            highestBid={auction.highest_bid || "No bids yet"}
           />
         ))}
       </div>
+
 
       {/* No Results Handling */}
       {filteredAuctions.length === 0 && (
