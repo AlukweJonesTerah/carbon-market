@@ -118,7 +118,6 @@ const AuctionList = () => {
                 ? auction.creator_info.celoAddress.substring(0, 6)
                 : "Unknown"
             }
-            startingBid={auction.starting_bid || "N/A"}
             bidCount={auction.bid_count || 0}
             highestBid={auction.highest_bid || "No bids yet"}
           />

@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useContext } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FiCheckCircle, FiAlertCircle } from 'react-icons/fi';
 import './Register.css'; // Reusing the same CSS file for consistency
+// import { AuthContext } from "./AuthContext";
 
 const Login = ({ onLogin = () => {} }) => {
   const [username, setUsername] = useState('');
@@ -10,6 +11,7 @@ const Login = ({ onLogin = () => {} }) => {
   const [success, setSuccess] = useState(false);
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  // const { handleLogin } = useContext(AuthContsext); // Access handleLogin from AuthContext
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -28,6 +30,7 @@ const Login = ({ onLogin = () => {} }) => {
 
       if (response.ok) {
         localStorage.setItem('token', data.access_token);
+        // handleLogin(data.access_token, data.user);
         setMessage('Login successful!');
         setSuccess(true);
         onLogin(data.access_token);

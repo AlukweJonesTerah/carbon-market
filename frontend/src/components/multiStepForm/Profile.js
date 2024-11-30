@@ -16,7 +16,7 @@ function Profile() {
     } else {
       fetchProfile();
     }
-  }, []);
+  }, [token, navigate]); // Added token and navigate to dependencies for correct re-renders
 
   const fetchProfile = async () => {
     try {
@@ -39,6 +39,7 @@ function Profile() {
     }
   };
 
+  // Logout function to clear the token and navigate to login
   const handleLogout = () => {
     localStorage.removeItem('token');
     navigate('/login');

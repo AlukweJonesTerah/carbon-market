@@ -3,7 +3,7 @@ from typing import Optional
 from datetime import datetime
 
 class UserCreate(BaseModel):
-    username: str
+    username: str 
     email: EmailStr
     password: str  # Accept password instead of hashed_password
 

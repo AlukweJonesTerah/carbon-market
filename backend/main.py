@@ -234,6 +234,8 @@ def decrypt_mnemonic(encrypted_mnemonic: str, password: str) -> str:
 
 
 
+import subprocess
+import json
 def check_and_auto_fund(celo_address: str):
     try:
         # Run the autofundAccount.js script synchronously
@@ -258,9 +260,13 @@ def check_and_auto_fund(celo_address: str):
             print("Error: autofundAccount.js returned empty output.")
             return False
 
-        # Attempt to parse JSON from stdout
+        # Split stdout by lines and get the last line
+        output_lines = result.stdout.strip().splitlines()
+        last_line = output_lines[-1]
+
+        # Attempt to parse JSON from the last line of stdout
         try:
-            fund_result = json.loads(result.stdout.strip())
+            fund_result = json.loads(last_line)
         except json.JSONDecodeError as e:
             print(f"Error decoding JSON from autofundAccount.js: {e}")
             return False
@@ -295,6 +301,7 @@ def check_and_get_balance(celo_address: str):
 
         # Log stdout for debugging
         print(f"autofundAccount.js stdout: {result.stdout.strip()}")
+        print(f"autofundAccounts.js stderr: {result.stderr.strip()}")
         
         # Split stdout by lines and attempt to parse only the last line
         output_lines = result.stdout.strip().splitlines()
@@ -378,8 +385,12 @@ async def login(user: LoginData):
         if not verify_password(user.password, existing_user["hashed_password"]):
             raise HTTPException(status_code=400, detail="Incorrect username or password")
 
-        # Call check_and_auto_fund without await, as it's now synchronous
+        # Call check_and_auto_fund synchronously and check if funding was successful
         funded = check_and_auto_fund(existing_user["celoAddress"])
+
+        # If funding failed, deny login and return an error message
+        if not funded:
+            raise HTTPException(status_code=400, detail="Failed to fund the account. Login denied.")
 
         # Generate token
         access_token = create_access_token({
@@ -459,6 +470,28 @@ async def generate_token(form_data: OAuth2PasswordRequestForm = Depends()):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail="Token generation error")
       
+# Example token blacklist to store invalidated tokens
+invalidated_tokens = set()
+
+# Logout endpoint
+@app.post("/logout/")
+async def logout(token: str = Depends(oauth2_scheme)):
+    """
+    Logs the user out by blacklisting the current token.
+    """
+    try:
+        # Decode the token to ensure it's valid
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        
+        # Add the token to the blacklist
+        invalidated_tokens.add(token)
+        
+        return {"message": "Logged out successfully"}
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token has expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    
 @app.post("/refresh_token/")
 async def refresh_token(current_user: dict = Depends(get_current_user)):
     try:
@@ -478,7 +511,7 @@ def notify_admin(message: str):
 
 
 # Backup recovery: recover account using mnemonic
-@router.post("/recover/")
+@app.post("/recover/")
 async def recover_account(user: LoginData):
     try:
         # Retrieve user data from the database
@@ -544,15 +577,6 @@ async def get_user_profile(current_user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=500, detail="An unexpected error occurred while retrieving the profile")
 
 
-# @app.get("/me")
-# async def read_users_me(current_user: dict = Depends(get_current_user)):
-#     return {
-#         "_id": str(current_user["_id"]),
-#         "username": current_user["username"],
-#         "email": current_user["email"],
-#         "celoAddress": current_user["celoAddress"],
-#     }
-
 # Get minimal current user info (no need for two separate /me endpoints)
 @app.get("/me")
 async def get_current_user_profile(current_user: dict = Depends(get_current_user)):
@@ -563,14 +587,6 @@ async def get_current_user_profile(current_user: dict = Depends(get_current_user
         "celoAddress": current_user["celoAddress"],
     }
 
-# @app.get("/users/me")
-# async def read_users_me(current_user: dict = Depends(get_current_user)):
-#     return {
-#         "_id": str(current_user["_id"]),
-#         "username": current_user["username"],
-#         "email": current_user["email"],
-#         "celoAddress": current_user["celoAddress"],
-#     }
 
 # Mocked user data (replace with real database calls)
 mock_users_db = {
@@ -1072,7 +1088,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         content={"detail": errors},
     )
 
-@router.post("/explain_calculation/")
+@app.post("/explain_calculation/")
 async def explain_calculation(data: CalculationExplanationRequest) -> dict:
     """
     Explain how the carbon credit amount is calculated based on predicted score and total carbon tonnage.
@@ -1203,7 +1219,7 @@ async def get_auctions(page: int = Query(1, ge=1), limit: int = Query(20, ge=1, 
 
         # Attach the cached creator details to the auction
         auction["creator_info"] = user_details_cache.get(creator_id, {})
-
+    
     return {"auctions": auctions, "page": page, "limit": limit}
 
 
@@ -1238,6 +1254,7 @@ async def check_user_balance(current_user: dict, required_amount: float) -> bool
 @app.post("/place_bid/")
 async def place_bid(bid: BidData, current_user: dict = Depends(get_current_user)):
     try:
+        print(f"Received bid: {bid}, User: {current_user}")
         # Fetch the auction
         auction = await auctions_collection.find_one({"_id": ObjectId(bid.auction_id)})
         if not auction:
@@ -1307,25 +1324,12 @@ async def place_bid(bid: BidData, current_user: dict = Depends(get_current_user)
         }
         await bids_collection.insert_one(bid_data)
 
-        # Fetch the updated highest bid
-        highest_bid = await bids_collection.find_one(
-            {"auction_id": bid.auction_id},
-            sort=[("bid_amount", -1)]
-        )
+        return {"message": "Bid placed successfully"}
 
-        return {
-            "message": "Bid placed successfully",
-            "bid_data": bid_data,
-            "highest_bid": highest_bid,
-            "creator_address": auction.get("creator_address", "N/A"),
-        }
-
-    except HTTPException as he:
-        raise he
     except Exception as e:
-        print("Error placing bid:", e)
-        raise HTTPException(status_code=500, detail=f"Failed to place bid: {str(e)}")
-    
+        print(f"Error placing bid: {e}")
+        raise HTTPException(status_code=500, detail=f"Error placing bid: {str(e)}")
+
 @app.get("/highest_bid/{auction_id}")
 async def get_highest_bid(auction_id: str):
     try:
@@ -1414,6 +1418,10 @@ async def get_auction_details(auction_id: str):
         formatted_start_date = start_date if start_date else "Invalid Date"
         formatted_end_date = end_date if end_date else "Invalid Date"
 
+        # Carbon credit boundaries for the bid
+        min_bid_amount = Decimal(auction["carbon_credit_amount"])
+        max_bid_amount = min_bid_amount * MAX_BID_PERCENTAGE
+
         return {
             "auction": {
                 "id": str(auction["_id"]),
@@ -1424,13 +1432,14 @@ async def get_auction_details(auction_id: str):
                 "satelliteImageUrl": auction.get("map_url"),
                 "carbonCredit": auction.get("carbon_credit_amount"),
                 "predicted_score": auction.get("predicted_score"),
-                "startingBid": auction.get("startingBid", "N/A"),
+                "startingBid": str(min_bid_amount) + " KES",
                 "creator": auction.get("creator_username", "Unknown"),
                 "creator_address": auction.get("creator_address", "N/A"),
             },
             "highest_bid": highest_bid,
             "total_bids": bid_count,
         }
+
     except HTTPException as e:
         print(f"Error in get_auction_details: {str(e)}")
         raise e

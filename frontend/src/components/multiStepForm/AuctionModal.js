@@ -1,7 +1,6 @@
 import ReactDOM from "react-dom";
 import React, { useState, useEffect, useContext } from "react";
 import { RiCloseFill } from "react-icons/ri";
-import Jazzicon from "react-jazzicon";
 import { AuthContext } from "./AuthContext";
 import "../../styles/AuctionModalList.css";
 
@@ -24,6 +23,7 @@ export const AuctionModal = ({ auction, modalOpen, closeModal }) => {
   const [error, setError] = useState(null);
   const [successMessage, setSuccessMessage] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
 
   // Check if the auction has finished
   useEffect(() => {
@@ -34,28 +34,35 @@ export const AuctionModal = ({ auction, modalOpen, closeModal }) => {
     }
   }, [auction?.end_date]);
 
+  useEffect(() => {
+    console.log("User from AuthContext:", token);
+  }, [token]);
+
   // Fetch auction details
   const fetchAuctionDetails = async () => {
     setLoading(true);
     setError(null);
-
+  
     try {
-      const response = await fetch(`http://localhost:8000/auction_details/${auction.id}`, {
+      const url = `http://localhost:8000/auction_details/${auction.id}`;
+      console.log("Fetching auction details from URL:", url);
+  
+      const response = await fetch(url, {
         method: "GET",
         headers: {
           Authorization: `Bearer ${token}`,
         },
       });
-
+  
       if (response.status === 404) {
         setError("Auction not found. It may have ended or been deleted.");
         return;
       }
-
+  
       if (!response.ok) {
         throw new Error("Failed to fetch auction details");
       }
-
+  
       const data = await response.json();
       setAuctionDetails(data.auction);
       setHighestBid(data.highest_bid?.bid_amount || "No bids yet");
@@ -67,38 +74,70 @@ export const AuctionModal = ({ auction, modalOpen, closeModal }) => {
       setLoading(false);
     }
   };
-
+  
   // Place a bid
-  const placeBid = async () => {
-    setError(null);
-    setSuccessMessage(null);
+const placeBid = async () => {
+  if (!token) {
+    setError("User information is missing. Please log in again.");
+    return;
+  }
 
-    try {
-      const response = await fetch("http://localhost:8000/place_bid/", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          auction_id: auction.id,
-          bid_amount: bidValue,
-        }),
-      });
+  setError(null);
+  setSuccessMessage(null);
+  setSubmitting(true);
 
-      const result = await response.json();
-      if (!response.ok) {
-        throw new Error(result.detail || "Failed to place bid");
+  // Validate bid value
+  const numericBidValue = parseFloat(bidValue);
+  if (isNaN(numericBidValue) || numericBidValue <= 0) {
+    setError("Please enter a valid bid amount greater than 0");
+    setSubmitting(false);
+    return;
+  }
+
+  try {
+    const response = await fetch("http://localhost:8000/place_bid/", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        auction_id: auction.id,
+        bidder: token, // Include the token as the bidder
+        bid_amount: numericBidValue,
+      }),
+    });
+
+    const result = await response.json();
+    console.log("Server response:", result);
+
+    if (!response.ok) {
+      // Handle different error status codes
+      switch (response.status) {
+        case 400:
+          throw new Error(result.detail || "Invalid bid");
+        case 401:
+          throw new Error("Your session has expired. Please log in again.");
+        case 422:
+          throw new Error(result.detail || "Invalid bid data");
+        default:
+          throw new Error(result.detail || "Failed to place bid");
       }
-
-      setSuccessMessage("Bid placed successfully!");
-      fetchAuctionDetails(); // Refresh auction details and bids
-    } catch (err) {
-      console.error("Error placing bid:", err);
-      setError(err.message || "Failed to place bid. Please try again.");
     }
-  };
 
+    setSuccessMessage("Bid placed successfully!");
+    setBidValue(""); // Reset bid value
+    fetchAuctionDetails(); // Refresh auction details and bids
+  } catch (err) {
+    console.error("Error placing bid:", err);
+    setError(err.message || "Failed to place bid. Please try again.");
+  } finally {
+    setSubmitting(false);
+  }
+};
+
+  
+  
   // Fetch data when modal opens
   useEffect(() => {
     if (modalOpen) fetchAuctionDetails();
@@ -173,33 +212,49 @@ export const AuctionModal = ({ auction, modalOpen, closeModal }) => {
                   </div>
                 </div>
 
-                {!auctionFinished ? (
+                {!auctionFinished && (
                   <div className="bidding-section">
                     <div className="bid-input-group">
                       <input
                         type="number"
+                        step="0.01"
+                        min="0"
                         placeholder="Enter your bid"
                         className="bid-input"
                         value={bidValue}
-                        onChange={(e) => setBidValue(e.target.value)}
+                        onChange={(e) => {
+                          console.log("New bid value:", e.target.value);
+                          setBidValue(e.target.value);
+                        }}
+                        disabled={submitting}
                       />
                       <button
                         onClick={placeBid}
-                        // disabled={bidValue <= 0 || !token}
+                        disabled={submitting || !bidValue || parseFloat(bidValue) <= 0 || !token}
                         className="button bid-button"
                       >
-                        Place Bid
+                        {submitting ? "Placing Bid..." : "Place Bid"}
                       </button>
                     </div>
-                  </div>
-                ) : (
-                  <div className="auction-ended">
-                    <p>The auction has ended. No more bids are accepted.</p>
+                    {/* Debug information */}
+                      <div style={{ marginTop: '10px', fontSize: '12px', color: '#666' }}>
+                        <div>Current Auction ID: {auction?.id}</div>
+                        <div>Bid Value: {bidValue}</div>
+                        <div>Token Present: {token ? 'Yes' : 'No'}</div>
+                      </div>
                   </div>
                 )}
 
-                {successMessage && <p className="success-message">{successMessage}</p>}
-                {error && <p className="error-message">{error}</p>}
+                {successMessage && (
+                          <p className="success-message">
+                            {successMessage}
+                          </p>
+                        )}
+                  {error && (
+                    <p className="error-message">
+                      {typeof error === 'object' ? JSON.stringify(error) : error}
+                    </p>
+                  )}
               </div>
             </>
           )}

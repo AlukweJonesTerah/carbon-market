@@ -16,7 +16,7 @@ const MarketplaceCard = ({
   endDate,
   creator,
   creatorAddress,
-  startingBid,
+  // startingBid,
   bidCount,
   highestBid,
 }) => {
@@ -91,7 +91,7 @@ const MarketplaceCard = ({
           Carbon Credits: {carbonCredit}
         </p>
         <p className="carbon-score">Score: {predicted_score} Ton</p>
-        <p className="starting-bid">Starting Bid: {startingBid} KES</p>
+        {/* <p className="starting-bid">Starting Bid: {startingBid} KES</p> */}
         <p className="bid-count">Total Bids: {bidCount}</p>
         <button onClick={toggleModal} className="button">
           See More
@@ -111,7 +111,7 @@ const MarketplaceCard = ({
             endDate,
             creator,
             creatorAddress,
-            startingBid,
+            // startingBid,
             bidCount,
             highestBid,
           }}

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { FiCheckCircle, FiAlertCircle } from 'react-icons/fi';
 import './Register.css'; // Reusing the same CSS for consistent styling
 
+// Rename function to start with an uppercase letter
 function RecoverAccount() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');

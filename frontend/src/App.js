@@ -10,8 +10,8 @@ import AuctionList from './components/multiStepForm/AuctionList';
 import Register from './components/multiStepForm/Register';
 import Login from './components/multiStepForm/Login';
 import AccountRecovery from './components/multiStepForm/AccountRecovery';
+import ExplainCalculation from './components/multiStepForm/ExplainCalculation';
 import Profile from './components/multiStepForm/Profile';
-import UserInfo from './components/multiStepForm/UserInfo';
 import LandingPage from './components/multiStepForm/homepage';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, AuthContext } from './components/multiStepForm/AuthContext';
@@ -39,12 +39,11 @@ function App() {
               <Route path="/create-auction" element={<PrivateRoute coordinates={coordinates} predictedScore={predictedScore} />} />
               <Route path="/auction-card/:id" element={<AuctionCard />} />
               <Route path="/auctions" element={<AuctionList />} />
+              <Route path="/explain_calculation" element={<ExplainCalculation />} />
               <Route path="/register" element={<Register />} />
               <Route path="/login" element={<Login />} />
               <Route path="/recover" element={<AccountRecovery />} />
               <Route path="/profile" element={<Profile />} />
-              <Route path="/me" element={<UserInfo />} />
-              {/* <Route path="/authentication" element={<Authentication />} /> */}
               <Route path="*" element={<Navigate to="/" />} />
             </Routes>
             <Toaster />
@@ -53,6 +52,7 @@ function App() {
         </div>
       </Router>
     </AuthProvider>
+
   );
 }
 
