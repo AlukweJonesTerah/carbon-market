@@ -76,3 +76,38 @@ npx shadcn-ui@latest add input
 npx shadcn-ui@latest add button
 npx shadcn-ui@latest add alert
 npx shadcn-ui@latest add tabs
+
+frontend
+    -.next
+    -node_modules
+    -public
+    -src
+        -assets
+        -component
+        -lib
+        -utils
+        -style
+        -App.js
+        index.js
+    -.gitignore
+    -components.json
+    -next-env.d.ts
+    -package-lock.json
+    -package.json
+    -README.md
+    -tailwind.config.js
+    -webpack.config.js
+    -yarn.lock
+
+npm install react-scripts react-dom react-router-dom
+npm install web-vitals
+npm install react-hot-toast react-icons react-jazzicon react-hook-form lucide-react
+npm install --save-dev @babel/plugin-proposal-private-property-in-object
+
+npm cache clean --force
+rm -rf node_modules package-lock.json
+npm install
+
+npm run build
+npm start
+

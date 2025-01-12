@@ -1,15 +1,15 @@
-from fastapi import FastAPI, HTTPException, Depends, Query, status,  APIRouter, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Depends, Query, status,  APIRouter, File, UploadFile, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from fastapi_limiter import FastAPILimiter
-from fastapi_limiter.depends import RateLimiter
 from pydantic import BaseModel, ValidationError, validator, Field, PositiveFloat, field_validator
 from jwt import ExpiredSignatureError, InvalidTokenError
 from typing import List, Optional, Union
+from pathlib import Path
 import os
 import json
 import httpx
+import shutil
 import logging
 import requests
 import numpy as np
@@ -23,7 +23,7 @@ from datetime import datetime, date
 from database import auctions_collection, bids_collection, users_collection, ckes_requests_collection, user_coordinates_collection
 from bson import ObjectId
 from authentication import get_password_hash, pwd_context ,verify_password, create_access_token, SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
-from models import UserCreate, LoginData, CKESRequest, AdminApproval, TokenData, RecovoryData
+from models import UserCreate, LoginData, CKESRequest, AdminApproval, TokenData, RecovoryData, KYCDetails
 from jose import JWTError, jwt
 from datetime import timedelta, datetime
 from pymongo.errors import DuplicateKeyError
@@ -372,6 +372,46 @@ async def register(user: UserCreate):
         logger.debug("Traceback: %s", traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Internal server error: {e}")
 
+KYC_UPLOAD_PATH = Path("./kyc_uploads")
+KYC_UPLOAD_PATH.mkdir(parents=True, exist_ok=True)
+
+# KYC endpoint: creates Celo account and stores encrypted mnemonic
+@app.post("/submit-kyc/")
+async def submit_kyc(
+    kyc: KYCDetails
+):
+    try:
+        # Log incoming data for debugging
+        print(f"Received KYC data for user_id={kyc.user_id}, full_name={kyc.full_name}")
+        
+        # Save files or process them as needed
+        front_id_path = f"uploads/{kyc.front_id_card.filename}"
+        back_id_path = f"uploads/{kyc.back_id_card.filename}"
+        
+        with open(front_id_path, "wb") as f:
+            f.write(await kyc.front_id_card.read())
+        with open(back_id_path, "wb") as f:
+            f.write(await kyc.back_id_card.read())
+        
+        # Simulate database update
+        kyc_data = {
+            "user_id": kyc.user_id,
+            "full_name": kyc.full_name,
+            "date_of_birth": kyc.date_of_birth,
+            "address": kyc.address,
+            "id_number": kyc.id_number,
+            "front_id_card": front_id_path,
+            "back_id_card": back_id_path,
+        }
+        print("KYC Details stored:", kyc_data)
+        
+        return {"message": "KYC details submitted successfully", "kyc_data": kyc_data}
+    
+    except Exception as e:
+        print(f"Error during KYC submission: {e}")
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail="Failed to submit KYC details")
+    
 # Login endpoint: authenticate user and decrypt mnemonic
 @app.post("/login/")
 async def login(user: LoginData):

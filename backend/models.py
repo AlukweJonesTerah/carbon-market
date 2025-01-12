@@ -16,6 +16,15 @@ class UserCreate(BaseModel):
             }
         }
 
+class KYCDetails(BaseModel):
+    user_id: str
+    full_name: str
+    date_of_birth: str
+    address: str
+    id_number: str
+    front_id_card: Optional[str]
+    back_id_card: Optional[str]
+    
 class UserInDB(UserCreate):
     id: Optional[str]
     hashed_password: str
