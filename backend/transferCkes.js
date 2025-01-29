@@ -22,10 +22,34 @@ async function transferCkes(recipientAddress, weiAmount) {
         kit.addAccount(fundingAccount.privateKey);
         kit.defaultAccount = fundingAccount.address;
 
+        // Check balance
+        const balance = await kit.web3.eth.getBalance(fundingAccount.address);
+        if (BigInt(balance) < BigInt(weiAmount)) {
+            console.error(JSON.stringify({ 
+                status: "error", 
+                error: "Insufficient funds",
+                balance: balance,
+                required: weiAmount
+            }));
+            process.exit(1);
+        }
+
+        // Estimate gas with lower limit
+        const gasLimit = 21000; // Basic transfer gas limit
+        const gasPrice = await kit.web3.eth.getGasPrice();
+        const gasEstimate = await kit.web3.eth.estimateGas({
+            from: fundingAccount.address,
+            to: recipientAddress,
+            value: weiAmount,
+            gas: gasLimit
+        }).catch(() => gasLimit);
+
         const tx = await kit.sendTransaction({
             from: fundingAccount.address,
             to: recipientAddress,
             value: weiAmount,
+            gas: gasEstimate,
+            gasPrice: gasPrice
         });
 
         await tx.waitReceipt();
@@ -33,7 +57,11 @@ async function transferCkes(recipientAddress, weiAmount) {
         process.exit(0);
 
     } catch (error) {
-        console.error(JSON.stringify({ status: "error", error: error.message || "Unknown error" }));
+        console.error(JSON.stringify({ 
+            status: "error", 
+            error: error.message || "Unknown error",
+            details: error.toString()
+        }));
         process.exit(1);
     }
 }

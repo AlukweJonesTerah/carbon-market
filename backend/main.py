@@ -4,7 +4,7 @@ from fastapi.responses import JSONResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from pydantic import BaseModel, ValidationError, validator, Field, PositiveFloat, field_validator
 from jwt import ExpiredSignatureError, InvalidTokenError
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Dict, Any
 from pathlib import Path
 import os
 import json
@@ -54,7 +54,7 @@ router = APIRouter(prefix="/users")
 # CORS Middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # React app origin
+    allow_origins=["http://localhost:3000","*", "http://10.0.22.228:3000"],  # React app origin
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -1237,7 +1237,11 @@ async def get_auctions(page: int = Query(1, ge=1), limit: int = Query(20, ge=1, 
     # Convert ObjectId to string for JSON serialization and add creator details
     for auction in auctions:
         auction["_id"] = str(auction["_id"])
-
+        
+        # count bids for thisauction
+        bid_count = await bids_collection.count_documents({"auction_id": auction["_id"]})
+        auction["bid_count"] = bid_count
+        
         # Fetch the creator's details only if not already fetched
         creator_id = auction.get("creator_id")
         if creator_id and creator_id not in user_details_cache:
@@ -1266,8 +1270,40 @@ async def get_auctions(page: int = Query(1, ge=1), limit: int = Query(20, ge=1, 
 # Constants for maximum bid percentage and minimum increment
 MAX_BID_PERCENTAGE = Decimal("600.00")  # Max bid is 600.00% of carbon credit amount
 MINIMUM_BID_INCREMENT = Decimal("0.05")  # 5% increment on the highest bid
-MAX_BIDS_PER_USER = 3  # Limit of bids per user per auction
+MAX_BIDS_PER_USER = 20 # Limit of bids per user per auction
 
+# Bid constraints
+MAX_BID_PERCENTAGE = Decimal("130.00")  # Max bid is 130% of carbon credit amount
+MIN_BID_INCREMENT = Decimal("0.05")      # Minimum 5% increment between bids
+MAX_BIDS_PER_USER = 20                    # Maximum bids per user per auction
+
+def calculate_bid_limits(carbon_credit_amount: Decimal) -> tuple[Decimal, Decimal]:
+    min_bid = carbon_credit_amount
+    max_bid = carbon_credit_amount * (Decimal("1.00") + MAX_BID_PERCENTAGE / Decimal("100.00"))
+    return min_bid, max_bid
+
+def validate_bid_amount(bid_amount: Decimal, carbon_credit_amount: Decimal, highest_bid: Optional[Dict]) -> None:
+    min_bid, max_bid = calculate_bid_limits(carbon_credit_amount)
+    
+    if bid_amount < min_bid:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Bid must be at least {min_bid} KES"
+        )
+        
+    if bid_amount > max_bid:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Bid cannot exceed {max_bid} KES ({MAX_BID_PERCENTAGE}% of carbon credit amount)"
+        )
+        
+    if highest_bid:
+        min_increment = Decimal(str(highest_bid["bid_amount"])) * (1 + MIN_BID_INCREMENT)
+        if bid_amount < min_increment:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Bid must be at least {MIN_BID_INCREMENT*100}% higher than current bid of {highest_bid['bid_amount']} KES"
+            )
 
 # Helper function to check if a user has sufficient balance
 async def check_user_balance(current_user: dict, required_amount: float) -> bool:
@@ -1294,81 +1330,84 @@ async def check_user_balance(current_user: dict, required_amount: float) -> bool
 @app.post("/place_bid/")
 async def place_bid(bid: BidData, current_user: dict = Depends(get_current_user)):
     try:
-        print(f"Received bid: {bid}, User: {current_user}")
-        # Fetch the auction
+        logger.info(f"Received bid: auction_id='{bid.auction_id}' amount={bid.bid_amount}")
+        
+        # Check user's existing bids count
+        existing_bids_count = await bids_collection.count_documents({
+            "auction_id": bid.auction_id,
+            "bidder_id": str(current_user["_id"])
+        })
+        
+        if existing_bids_count >= MAX_BIDS_PER_USER:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Maximum bids limit reached ({MAX_BIDS_PER_USER} bids per auction)"
+            )
+
+        # Fetch auction
         auction = await auctions_collection.find_one({"_id": ObjectId(bid.auction_id)})
         if not auction:
             raise HTTPException(status_code=404, detail="Auction not found")
 
         # Prevent self-bidding
         if auction["creator_id"] == str(current_user["_id"]):
-            raise HTTPException(status_code=400, detail="You cannot bid on your own auction")
+            raise HTTPException(status_code=400, detail="Cannot bid on your own auction")
 
-        # Check if the auction has ended
-        end_date = datetime.fromisoformat(auction['end_date'])
-        if datetime.now() > end_date:
-            raise HTTPException(status_code=400, detail="The auction has already ended")
-
-        # Check the user's number of bids on this auction
-        user_bids_count = await bids_collection.count_documents({
-            "auction_id": bid.auction_id,
-            "bidder_id": str(current_user["_id"])
-        })
-        if user_bids_count >= MAX_BIDS_PER_USER:
+        # Check auction end date
+        current_time = datetime.utcnow()
+        end_date = auction['end_date']
+        if isinstance(end_date, str):
+            end_date = datetime.fromisoformat(end_date.replace('Z', '+00:00'))
+            
+        if current_time > end_date:
             raise HTTPException(
-                status_code=400,
-                detail=f"You have reached the limit of {MAX_BIDS_PER_USER} bids on this auction."
+                status_code=400, 
+                detail="The auction has already ended"
             )
 
-        # Carbon credit boundaries for the bid
-        min_bid_amount = Decimal(auction["carbon_credit_amount"])
+        # Validate bid limits
+        min_bid_amount = Decimal(str(auction["carbon_credit_amount"]))
         max_bid_amount = min_bid_amount * MAX_BID_PERCENTAGE
+        bid_amount = Decimal(str(bid.bid_amount))
 
-        # Validate bid amount within bounds
-        if Decimal(bid.bid_amount) < min_bid_amount:
+        if bid_amount < min_bid_amount:
             raise HTTPException(
                 status_code=400,
-                detail=f"Bid amount must be at least the carbon credit amount of {min_bid_amount}."
+                detail=f"Bid must be at least {min_bid_amount} KES"
             )
-        if Decimal(bid.bid_amount) > max_bid_amount:
+            
+        if bid_amount > max_bid_amount:
             raise HTTPException(
-                status_code=400,
-                detail=f"Bid amount cannot exceed 130% of the carbon credit amount ({max_bid_amount})."
+                status_code=400, 
+                detail=f"Bid cannot exceed {max_bid_amount} KES"
             )
 
-        # Check the current highest bid and enforce minimum increment
-        highest_bid = await bids_collection.find_one(
-            {"auction_id": bid.auction_id},
-            sort=[("bid_amount", -1)]
-        )
-        if highest_bid:
-            min_required_bid = Decimal(highest_bid["bid_amount"]) * (1 + MINIMUM_BID_INCREMENT)
-            if Decimal(bid.bid_amount) < min_required_bid:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Bid must be at least 5% higher than the current highest bid of {highest_bid['bid_amount']} CELO."
-                )
-
-        # Check if user has enough balance
-        required_balance = bid.bid_amount
-        if not await check_user_balance(current_user, required_balance):
-            raise HTTPException(status_code=400, detail="Insufficient balance to place bid")
-
-        # Place the bid
+        # Process bid
         bid_data = {
             "auction_id": bid.auction_id,
             "bidder_id": str(current_user["_id"]),
-            "bidder_address": current_user.get("celo_address") or current_user.get("celoAddress"),
-            "bid_amount": bid.bid_amount,
-            "bid_time": datetime.now().isoformat(),
+            "bidder_username": current_user["username"],
+            "bidder_address": current_user.get("celoAddress"),
+            "bid_amount": float(bid_amount),
+            "bid_time": current_time,
+            "status": "active"
         }
-        await bids_collection.insert_one(bid_data)
 
-        return {"message": "Bid placed successfully"}
+        result = await bids_collection.insert_one(bid_data)
+        
+        remaining_bids = MAX_BIDS_PER_USER - (existing_bids_count + 1)
+        return {
+            "message": "Bid placed successfully",
+            "bid_id": str(result.inserted_id),
+            "remaining_bids": remaining_bids
+        }
 
+    except HTTPException as e:
+        logger.error(f"Bid error: {e.detail}")
+        raise
     except Exception as e:
-        print(f"Error placing bid: {e}")
-        raise HTTPException(status_code=500, detail=f"Error placing bid: {str(e)}")
+        logger.error(f"Unexpected error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @app.get("/highest_bid/{auction_id}")
 async def get_highest_bid(auction_id: str):
@@ -1432,59 +1471,69 @@ async def get_highest_bid(auction_id: str):
     except Exception as e:
         print(f"Error retrieving highest bid: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to retrieve highest bid: {str(e)}")
+    
 
+from fastapi.encoders import jsonable_encoder
+
+def format_date(date: datetime) -> str:
+    try:
+        return date.isoformat() if isinstance(date, datetime) else str(date)
+    except ValueError:
+        return "Invalid Date"
+    
+def serialize_mongodb_doc(doc: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not doc:
+        return None
+    serialized  = doc.copy()
+    for key, value in serialized.items():
+        if isinstance(value, ObjectId):
+            serialized[key] = str(value)
+        elif isinstance(value, datetime):
+            serialized[key] = format_date(value)
+    return serialized
+ 
 @app.get("/auction_details/{auction_id}")
 async def get_auction_details(auction_id: str):
     try:
-        # Validate auction_id format
         if not ObjectId.is_valid(auction_id):
             raise HTTPException(status_code=400, detail="Invalid auction ID format")
 
-        # Fetch the auction by ID
         auction = await auctions_collection.find_one({"_id": ObjectId(auction_id)})
         if not auction:
             raise HTTPException(status_code=404, detail="Auction not found")
 
-        # Fetch highest bid details
         highest_bid = await bids_collection.find_one(
-            {"auction_id": auction_id}, sort=[("bid_amount", -1)]
+            {"auction_id": auction_id},
+            sort=[("bid_amount", -1)]
         )
         bid_count = await bids_collection.count_documents({"auction_id": auction_id})
 
-        # Handle start and end dates
-        start_date = auction.get("start_date")
-        end_date = auction.get("end_date")
+        min_bid_amount = Decimal(str(auction.get("carbon_credit_amount", 0)))
 
-        formatted_start_date = start_date if start_date else "Invalid Date"
-        formatted_end_date = end_date if end_date else "Invalid Date"
-
-        # Carbon credit boundaries for the bid
-        min_bid_amount = Decimal(auction["carbon_credit_amount"])
-        max_bid_amount = min_bid_amount * MAX_BID_PERCENTAGE
-
-        return {
+        response_data = {
             "auction": {
                 "id": str(auction["_id"]),
-                "title": auction["title"],
-                "description": auction["description"],
-                "start_date": formatted_start_date,
-                "end_date": formatted_end_date,
+                "title": auction.get("title"),
+                "description": auction.get("description"),
+                "start_date": format_date(auction.get("start_date")),
+                "end_date": format_date(auction.get("end_date")),
                 "satelliteImageUrl": auction.get("map_url"),
                 "carbonCredit": auction.get("carbon_credit_amount"),
                 "predicted_score": auction.get("predicted_score"),
-                "startingBid": str(min_bid_amount) + " KES",
+                "startingBid": f"{min_bid_amount} KES",
                 "creator": auction.get("creator_username", "Unknown"),
                 "creator_address": auction.get("creator_address", "N/A"),
             },
-            "highest_bid": highest_bid,
-            "total_bids": bid_count,
+            "highest_bid": serialize_mongodb_doc(highest_bid),
+            "total_bids": bid_count
         }
 
+        return response_data
+
     except HTTPException as e:
-        print(f"Error in get_auction_details: {str(e)}")
         raise e
     except Exception as e:
-        print(f"Unexpected error in get_auction_details: {str(e)}")
+        logger.error(f"Unexpected error in get_auction_details: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 

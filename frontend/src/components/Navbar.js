@@ -20,11 +20,12 @@ const Navbar = () => {
       </div>
       <ul className="navbar-links">
         <li><Link to="/auctions">Auctions</Link></li>
+        <li><Link to="/explain_calculation">ExplainCalculation</Link></li>
         {token ? (
           <>
+            <li><Link to="/coordinates">CoordinateForm</Link></li>
             <li><Link to="/profile">Profile</Link></li>
             <li><button onClick={handleLogoutClick} className="logout-button">Logout</button></li>
-            <li><Link to="/explain_calculation">ExplainCalculation</Link></li>
           </>
         ) : (
           <>

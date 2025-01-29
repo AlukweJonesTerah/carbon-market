@@ -67,6 +67,7 @@ h4 {
 
 .form-group {
   position: relative;
+  margin-bottom: var(--space-md);
 }
 
 .form-input,
@@ -187,4 +188,111 @@ label {
 
 .form-input:invalid {
   border-color: var(--error-color);
+}
+
+.feedback {
+  padding: var(--space-sm);
+  margin-bottom: var(--space-md);
+  border-radius: 6px;
+  text-align: center;
+  font-size: 0.9rem;
+}
+
+.feedback.success {
+  background-color: rgba(46, 204, 113, 0.1);
+  color: var(--success-color);
+}
+
+.feedback.error {
+  background-color: rgba(231, 76, 60, 0.1);
+  color: var(--error-color);
+}
+
+/* Button Base Styles */
+.button {
+  padding: var(--space-sm) var(--space-md);
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 0.95rem;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  border: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-sm);
+  min-width: 120px;
+}
+
+/* Primary Button */
+.button-primary {
+  background-color: var(--primary-color);
+  color: white;
+}
+
+.button-primary:hover:not(:disabled) {
+  background-color: #27ae60;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(46, 204, 113, 0.2);
+}
+
+/* Secondary Button */
+.button-secondary {
+  background-color: white;
+  color: var(--text-color);
+  border: 2px solid var(--input-border-color);
+}
+
+.button-secondary:hover:not(:disabled) {
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+  transform: translateY(-2px);
+}
+
+/* Button States */
+.button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* Loading Animation */
+.button-loading {
+  position: relative;
+  color: transparent !important;
+}
+
+.button-loading::after {
+  content: "";
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  border: 2px solid #ffffff;
+  border-radius: 50%;
+  border-top-color: transparent;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Button Group */
+.button-group {
+  display: flex;
+  gap: var(--space-md);
+  margin-top: var(--space-lg);
+}
+
+/* Responsive */
+@media screen and (max-width: 600px) {
+  .button-group {
+    flex-direction: column;
+  }
+  
+  .button {
+    width: 100%;
+  }
 }
