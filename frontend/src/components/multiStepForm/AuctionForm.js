@@ -163,10 +163,6 @@ const AuctionForm = () => {
         <p>Redirecting to coordinate submission...</p>
       ) : (
         <>
-          <button onClick={handleGoBack} className="back-button">
-            Go Back to Edit Coordinates
-          </button>
-
           <form onSubmit={handleSubmit(onSubmit)} className="auction-form">
             <div className="form-group">
               <input
@@ -225,6 +221,9 @@ const AuctionForm = () => {
             >
               {isSubmitting ? "Creating Auction..." : "Create Auction"}
             </button>
+            <button onClick={handleGoBack} className="submit-button">
+            Go Back to Edit Coordinates
+          </button>
           </form>
         </>
       )}
